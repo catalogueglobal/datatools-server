@@ -1,7 +1,12 @@
 application:
-  assets_bucket: datatools-staging # dist directory
+  assets_bucket: bucket-name # dist directory
   public_url: http://localhost:9966
   notifications_enabled: false
+  cors:
+    enabled: false
+#    origins: https://google.com
+#    methods: PUT, POST
+#    headers: origin, content-type, accept
   port: 4000
   data:
     mapdb: /tmp

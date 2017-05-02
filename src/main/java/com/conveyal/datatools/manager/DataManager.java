@@ -15,7 +15,6 @@ import com.conveyal.datatools.manager.extensions.transitland.TransitLandFeedReso
 import com.conveyal.datatools.common.status.MonitorableJob;
 import com.conveyal.datatools.manager.models.Project;
 import com.conveyal.datatools.manager.persistence.FeedStore;
-import com.conveyal.datatools.manager.utils.CorsFilter;
 import com.conveyal.gtfs.GTFSCache;
 import com.conveyal.gtfs.api.ApiMain;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,15 +31,15 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 
+import static com.conveyal.datatools.common.utils.SparkUtils.enableCORS;
+import static com.conveyal.datatools.common.utils.SparkUtils.formatJSON;
 import static spark.Spark.*;
 
 public class DataManager {
@@ -73,16 +72,14 @@ public class DataManager {
     public static final String DEFAULT_ENV = "configurations/default/env.yml";
     public static final String DEFAULT_CONFIG = "configurations/default/server.yml";
 
-    private static List<String> apiFeedSources = new ArrayList<>();
-
     public static void main(String[] args) throws IOException {
 
         // load config
         loadConfig(args);
 
         // set port
-        if (getConfigProperty("application.port") != null) {
-            port(Integer.parseInt(getConfigPropertyAsText("application.port")));
+        if (hasConfigProperty("application.port")) {
+            port(getConfigProperty("application.port").asInt());
         }
         useS3 = "true".equals(getConfigPropertyAsText("application.data.use_s3_storage"));
 
@@ -110,7 +107,6 @@ public class DataManager {
             // because otherwise zip files will be DELETED!!! on removal from GTFSCache.
             ApiMain.initialize(null, FeedStore.basePath.getAbsolutePath());
         }
-        CorsFilter.apply();
 
         // core controllers
         ProjectController.register(apiPrefix);
@@ -160,42 +156,24 @@ public class DataManager {
             DumpController.register("/");
         }
 
+        if ("true".equals(getConfigPropertyAsText("application.cors.enabled"))) {
+            String origins = getConfigPropertyAsText("application.cors.origins");
+            String methods = getConfigPropertyAsText("application.cors.methods");
+            String headers = getConfigPropertyAsText("application.cors.headers");
+            enableCORS(apiPrefix, origins, methods, headers);
+        }
+
         before(apiPrefix + "secure/*", (request, response) -> {
-            if(request.requestMethod().equals("OPTIONS")) return;
             Auth0Connection.checkUser(request);
         });
 
-        // lazy load by feed source id if new one is requested
-//        if ("true".equals(getConfigPropertyAsText("modules.gtfsapi.load_on_fetch"))) {
-//            before(apiPrefix + "*", (request, response) -> {
-//                String feeds = request.queryParams("feed");
-//                if (feeds != null) {
-//                    String[] feedIds = feeds.split(",");
-//                    for (String feedId : feedIds) {
-//                        FeedSource fs = FeedSource.get(feedId);
-//                        if (fs == null) {
-//                            continue;
-//                        }
-//                        else if (!GtfsApiController.gtfsApi.registeredFeedSources.contains(fs.id) && !apiFeedSources.contains(fs.id)) {
-//                            apiFeedSources.add(fs.id);
-//
-//                            LoadGtfsApiFeedJob loadJob = new LoadGtfsApiFeedJob(fs);
-//                            new Thread(loadJob).start();
-//                        halt(202, "Initializing feed load...");
-//                        }
-//                        else if (apiFeedSources.contains(fs.id) && !GtfsApiController.gtfsApi.registeredFeedSources.contains(fs.id)) {
-//                            halt(202, "Loading feed, please try again later");
-//                        }
-//                    }
-//
-//                }
-//            });
-//        }
         // return "application/json" for all API routes
+        // must be overridden on request-by-request basis if needed
         after(apiPrefix + "*", (request, response) -> {
             response.type("application/json");
             response.header("Content-Encoding", "gzip");
         });
+
         // load index.html
         InputStream stream = DataManager.class.getResourceAsStream("/public/index.html");
         String index = IOUtils.toString(stream).replace("${S3BUCKET}", getConfigPropertyAsText("application.assets_bucket"));
@@ -203,18 +181,10 @@ public class DataManager {
 
         // return 404 for any api response that's not found
         get(apiPrefix + "*", (request, response) -> {
-            halt(404, SparkUtils.formatJSON("Unknown error occurred.", 404));
+            halt(404, formatJSON(String.format("Route %s not found", request.pathInfo()), 404));
             return null;
         });
-        
-//        // return assets as byte array
-//        get("/assets/*", (request, response) -> {
-//            try (InputStream stream = DataManager.class.getResourceAsStream("/public" + request.pathInfo())) {
-//                return IOUtils.toByteArray(stream);
-//            } catch (IOException e) {
-//                return null;
-//            }
-//        });
+
         // return index.html for any sub-directory
         get("/*", (request, response) -> {
             response.type("text/html");

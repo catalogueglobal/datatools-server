@@ -7,7 +7,9 @@ import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 
+import static spark.Spark.before;
 import static spark.Spark.halt;
+import static spark.Spark.options;
 
 /**
  * Created by landon on 12/15/16.
@@ -41,5 +43,31 @@ public class SparkUtils {
 
     public static String formatJSON(String message, int code) {
         return String.format("{\"result\":\"ERR\",\"message\":\"%s\",\"code\":%d}", message, code);
+    }
+
+
+    // Enables CORS on requests. This method is an initialization method and should be called once.
+    public static void enableCORS(final String prefix, final String origin, final String methods, final String headers) {
+
+        options(prefix + "*", (request, response) -> {
+
+            String accessControlRequestHeaders = request.headers("Access-Control-Request-Headers");
+            if (accessControlRequestHeaders != null) {
+                response.header("Access-Control-Allow-Headers", accessControlRequestHeaders);
+            }
+
+            String accessControlRequestMethod = request.headers("Access-Control-Request-Method");
+            if (accessControlRequestMethod != null) {
+                response.header("Access-Control-Allow-Methods", accessControlRequestMethod);
+            }
+
+            return "OK";
+        });
+
+        before((request, response) -> {
+            response.header("Access-Control-Allow-Origin", origin);
+            response.header("Access-Control-Request-Method", methods);
+            response.header("Access-Control-Allow-Headers", headers);
+        });
     }
 }
