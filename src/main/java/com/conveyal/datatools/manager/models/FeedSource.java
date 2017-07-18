@@ -15,7 +15,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonView;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.eventbus.EventBus;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.mapdb.Fun;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,8 +25,11 @@ import spark.HaltException;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -141,6 +146,111 @@ public class FeedSource extends Model implements Cloneable {
         this(null);
     }
 
+    @JsonIgnore
+    private String getURLFromCSV(String csv_url) {
+        try {
+            LOG.info("Constructing url: {}", csv_url);
+            url = new URL(csv_url);
+        } catch (MalformedURLException ex) {
+            LOG.error("Error requesting datagouv API URL: {}", csv_url);
+        }
+
+        String dataset_url = null;
+        try {
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            // optional default is GET
+            con.setRequestMethod("GET");
+
+            int responseCode = con.getResponseCode();
+            System.out.println("\nSending 'GET' request to URL : " + url);
+            System.out.println("Response Code : " + responseCode);
+            BufferedReader in = new BufferedReader(
+                    new InputStreamReader(con.getInputStream()));
+            String inputLine;
+            StringBuffer response = new StringBuffer();
+            while ((inputLine = in.readLine()) != null) {
+                String[] cols = inputLine.split(";");
+                dataset_url = cols[cols.length - 1];
+            }
+            in.close();
+        } catch (Exception ex) {
+            LOG.error("Error reading from TransitLand API");
+            ex.printStackTrace();
+        }
+        return dataset_url;
+    }
+
+    @JsonIgnore
+    public URL getLatestUrl() {
+        LOG.info("getLatestURL");
+        LOG.info("getExternalProperties keys: {}", this.getExternalProperties().keySet());
+        if (!this.getExternalProperties().containsKey("DATAGOUVFR")) {
+            return this.url;
+        }
+        String dataset_url = this.getExternalProperties().get("DATAGOUVFR").get("dataset_url");
+        try {
+            LOG.info("Constructing url: {}", dataset_url);
+            url = new URL(dataset_url);
+        } catch (MalformedURLException ex) {
+            LOG.error("Error requesting datagouv API URL: {}", dataset_url);
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        String latest = null;
+        try {
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+
+            // optional default is GET
+            con.setRequestMethod("GET");
+
+            int responseCode = con.getResponseCode();
+            System.out.println("\nSending 'GET' request to URL : " + url);
+            System.out.println("Response Code : " + responseCode);
+
+            BufferedReader in = new BufferedReader(
+                    new InputStreamReader(con.getInputStream()));
+            String inputLine;
+            StringBuffer response = new StringBuffer();
+
+            while ((inputLine = in.readLine()) != null) {
+                response.append(inputLine);
+            }
+            in.close();
+
+            String json = response.toString();
+            JsonNode node = mapper.readTree(json);
+            String last_modified = null;
+            String format = null;
+            for (JsonNode resource : node.get("resources")) {
+                String tmp_last_modified = resource.get("last_modified").asText();
+                String tmp_format = resource.get("format").asText();
+                if (!tmp_format.contentEquals("gtfs") &&
+                    !tmp_format.contentEquals("csv")) {
+                    continue;
+                }
+                if (last_modified == null ||
+                        last_modified.compareTo(tmp_last_modified) == -1) {
+                    last_modified = tmp_last_modified;
+                    latest = resource.get("url").asText();
+                    format = tmp_format;
+                }
+            }
+            if (format.contentEquals("csv")) {
+                latest = this.getURLFromCSV(latest);
+            }
+        } catch (Exception ex) {
+            LOG.error("Error reading from TransitLand API");
+            ex.printStackTrace();
+        }
+
+        try {
+            return new URL(latest);
+        } catch(MalformedURLException ex) {
+            LOG.error("Error requesting datagouv API URL: {}", dataset_url);
+        }
+        return null;
+    }
+
     /**
      * Fetch the latest version of the feed.
      */
@@ -159,7 +269,7 @@ public class FeedSource extends Model implements Cloneable {
         FeedVersion version = new FeedVersion(this);
 
         // build the URL from which to fetch
-        URL url = this.url;
+        URL url = this.getLatestUrl();
         LOG.info("Fetching from {}", url.toString());
 
         // make the request, using the proper HTTP caching headers to prevent refetch, if applicable
@@ -203,7 +313,13 @@ public class FeedSource extends Model implements Cloneable {
 
         File newGtfsFile;
 
+
         try {
+            // optional default is GET
+            conn.setRequestMethod("GET");
+
+            //add request header
+            conn.setRequestProperty("User-Agent", "User-Agent");
             conn.connect();
             String message;
             switch (conn.getResponseCode()) {
