@@ -35,3 +35,6 @@ extensions:
     enabled: false
     api: http://api.transitfeeds.com/v1/getFeeds
     key: your-api-key
+  datagouvfr:
+    enabled: true
+    api: http://www.data.gouv.fr/api/1/datasets/?facets=tag&tag=gtfs&page_size=20

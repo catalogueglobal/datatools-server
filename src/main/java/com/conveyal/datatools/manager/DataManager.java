@@ -11,6 +11,7 @@ import com.conveyal.datatools.manager.extensions.ExternalFeedResource;
 import com.conveyal.datatools.manager.extensions.mtc.MtcFeedResource;
 import com.conveyal.datatools.manager.extensions.transitfeeds.TransitFeedsFeedResource;
 import com.conveyal.datatools.manager.extensions.transitland.TransitLandFeedResource;
+import com.conveyal.datatools.manager.extensions.datagouvfr.DataGouvFrFeedResource;
 
 import com.conveyal.datatools.common.status.MonitorableJob;
 import com.conveyal.datatools.manager.models.Project;
@@ -289,6 +290,11 @@ public class DataManager {
         if (isExtensionEnabled("transitfeeds")) {
             LOG.info("Registering TransitFeeds Resource");
             registerExternalResource(new TransitFeedsFeedResource());
+        }
+
+        if (isExtensionEnabled("datagouvfr")) {
+            LOG.info("Registering DatagouvFr Resource");
+            registerExternalResource(new DataGouvFrFeedResource());
         }
     }
     private static void loadConfig (String[] args) throws IOException {
