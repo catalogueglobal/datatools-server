@@ -1,17 +1,17 @@
 application:
-  assets_bucket: datatools-staging # dist directory
+  assets_bucket: transportgouvfr # dist directory
   public_url: http://localhost:9966
-  notifications_enabled: false
+  notifications_enabled: true
   port: 4000
   data:
-    mapdb: /tmp
-    gtfs: /tmp
-    editor_mapdb: /tmp
-    regions: /tmp
+    mapdb: /home/vincent/dev/datatools-server/data
+    gtfs: /home/vincent/dev/datatools-server/data
+    editor_mapdb: /home/vincent/dev/datatools-server/data
+    regions: /home/vincent/dev/datatools-server/data
     use_s3_storage: false
-    s3_region: us-east-1
+    s3_region: eu-central-1
     aws_role: arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/${AWS_ROLE_NAME}
-    gtfs_s3_bucket: bucket-name
+    gtfs_s3_bucket: transportgouvfr
 modules:
   enterprise:
     enabled: false
@@ -32,6 +32,6 @@ extensions:
     enabled: true
     api: https://transit.land/api/v1/feeds
   transitfeeds:
-    enabled: true
+    enabled: false
     api: http://api.transitfeeds.com/v1/getFeeds
     key: your-api-key
