@@ -1,17 +1,17 @@
 application:
-  assets_bucket: transportgouvfr # dist directory
+  assets_bucket: datatools-staging # dist directory
   public_url: http://localhost:9966
-  notifications_enabled: true
+  notifications_enabled: false
   port: 4000
   data:
-    mapdb: /home/vincent/dev/datatools-server/data
-    gtfs: /home/vincent/dev/datatools-server/data
-    editor_mapdb: /home/vincent/dev/datatools-server/data
-    regions: /home/vincent/dev/datatools-server/data
+    mapdb: /tmp
+    gtfs: /tmp
+    editor_mapdb: /tmp
+    regions: /tmp
     use_s3_storage: false
-    s3_region: eu-central-1
+    s3_region: us-east-1
     aws_role: arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/${AWS_ROLE_NAME}
-    gtfs_s3_bucket: transportgouvfr
+    gtfs_s3_bucket: bucket-name
 modules:
   enterprise:
     enabled: false
@@ -32,9 +32,6 @@ extensions:
     enabled: true
     api: https://transit.land/api/v1/feeds
   transitfeeds:
-    enabled: false
+    enabled: true
     api: http://api.transitfeeds.com/v1/getFeeds
     key: your-api-key
-  datagouvfr:
-    enabled: true
-    api: http://www.data.gouv.fr/api/1/datasets/?facets=tag&tag=gtfs&page_size=20
