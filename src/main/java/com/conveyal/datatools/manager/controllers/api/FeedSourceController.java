@@ -2,6 +2,7 @@ package com.conveyal.datatools.manager.controllers.api;
 
 import com.conveyal.datatools.common.utils.SparkUtils;
 import com.conveyal.datatools.manager.DataManager;
+import com.conveyal.datatools.manager.auth.Auth0Connection;
 import com.conveyal.datatools.manager.auth.Auth0UserProfile;
 import com.conveyal.datatools.manager.jobs.FetchSingleFeedJob;
 import com.conveyal.datatools.manager.jobs.NotifyUsersForSubscriptionJob;
@@ -277,6 +278,7 @@ public class FeedSourceController {
         return requestFeedSource(req, FeedSource.get(id), action);
     }
     public static FeedSource requestFeedSource(Request req, FeedSource s, String action) {
+        Auth0Connection.checkUser(req);
         Auth0UserProfile userProfile = req.attribute("user");
         Boolean publicFilter = Boolean.valueOf(req.queryParams("public")) ||
                 req.url().split("/api/*/")[1].startsWith("public");
