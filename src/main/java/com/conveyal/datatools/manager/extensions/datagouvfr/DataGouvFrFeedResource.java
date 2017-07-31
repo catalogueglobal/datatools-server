@@ -18,6 +18,7 @@ import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.ArrayList;
 
 /**
  * Created by demory on 3/31/16.
@@ -27,10 +28,22 @@ public class DataGouvFrFeedResource implements ExternalFeedResource {
 
     public static final Logger LOG = LoggerFactory.getLogger(DataGouvFrFeedResource.class);
 
-    private String api;
+    private ArrayList<String> search_endpoints;
 
     public DataGouvFrFeedResource() {
-        api = DataManager.getConfigPropertyAsText("extensions.datagouvfr.api");
+        JsonNode node = DataManager.getConfigProperty("extensions.datagouvfr.search_endpoints");
+        search_endpoints = new ArrayList<String>();
+        if (node == null) {
+            LOG.error("extensions.datagouvfr.search_endpoints is empty");
+            return;
+        }
+        if (!node.isArray()) {
+            LOG.error("extensions.datagouvfr.search_endpoints is not an array");
+            return;
+        }
+        for (final JsonNode e : node) {
+            search_endpoints.add(e.asText());
+        }
     }
 
     @Override
@@ -43,97 +56,101 @@ public class DataGouvFrFeedResource implements ExternalFeedResource {
         LOG.info("Importing DataGouvFr feeds");
         URL url = null;
         ObjectMapper mapper = new ObjectMapper();
-        String locationFilter = "";
-        String next_page = api;
-        LOG.info("Starting loop");
+        for (String search_endpoint : search_endpoints) {
+            String next_page = search_endpoint;
+            LOG.info("Starting loop");
 
-        do {
-            try {
-                LOG.info("Constructing url: {}", next_page);
-                url = new URL(next_page);
-            } catch (MalformedURLException ex) {
-                LOG.error("Error requesting datagouv API URL: {}", next_page);
-            }
-
-            try {
-                HttpURLConnection con = (HttpURLConnection) url.openConnection();
-
-                // optional default is GET
-                con.setRequestMethod("GET");
-
-                int responseCode = con.getResponseCode();
-                System.out.println("\nSending 'GET' request to URL : " + url);
-                System.out.println("Response Code : " + responseCode);
-
-                BufferedReader in = new BufferedReader(
-                        new InputStreamReader(con.getInputStream()));
-                String inputLine;
-                StringBuffer response = new StringBuffer();
-
-                while ((inputLine = in.readLine()) != null) {
-                    response.append(inputLine);
+            do {
+                try {
+                    LOG.info("Constructing url: {}", next_page);
+                    url = new URL(next_page);
+                } catch (MalformedURLException ex) {
+                    LOG.error("Error requesting datagouv API URL: {}", next_page);
                 }
-                in.close();
 
-                String json = response.toString();
-                JsonNode node = mapper.readTree(json);
-                next_page = node.get("next_page").asText();
-                LOG.info("New next_page: {}", next_page);
-                for (JsonNode dataset : node.get("data")) {
-                    DataGouvFrFeed dgfFeed = new DataGouvFrFeed(dataset);
-                    LOG.info("Format: {}", dgfFeed.feed_format);
-                    if (!dgfFeed.feed_format.contentEquals("gtfs") &&
-                        !dgfFeed.feed_format.contentEquals("csv")) {
-                        continue;
+                try {
+                    LOG.info("Begin connection to url: {}", next_page);
+                    HttpURLConnection con = (HttpURLConnection) url.openConnection();
+
+                    // optional default is GET
+                    con.setRequestMethod("GET");
+
+                    int responseCode = con.getResponseCode();
+                    System.out.println("\nSending 'GET' request to URL : " + url);
+                    System.out.println("Response Code : " + responseCode);
+
+                    BufferedReader in = new BufferedReader(
+                            new InputStreamReader(con.getInputStream()));
+                    String inputLine;
+                    StringBuffer response = new StringBuffer();
+
+                    while ((inputLine = in.readLine()) != null) {
+                        response.append(inputLine);
                     }
+                    in.close();
+                    LOG.info("Finished to read url: {}", next_page);
 
-                    FeedSource source = null;
+                    String json = response.toString();
+                    JsonNode node = mapper.readTree(json);
+                    next_page = node.get("next_page").asText();
+                    LOG.info("New next_page: {}", next_page);
+                    for (JsonNode dataset : node.get("data")) {
+                        DataGouvFrFeed dgfFeed = new DataGouvFrFeed(dataset);
+                        LOG.info("Format: {}", dgfFeed.feed_format);
+                        if (!dgfFeed.feed_format.contentEquals("gtfs") &&
+                            !dgfFeed.feed_format.contentEquals("GTFS") &&
+                            !dgfFeed.feed_format.contentEquals("csv")) {
+                            continue;
+                        }
 
-                    // check if a feed already exists with this id
-                    for (FeedSource existingSource : project.getProjectFeedSources()) {
-                        ExternalFeedSourceProperty dgfIdProp =
-                                ExternalFeedSourceProperty.find(existingSource,
-                                        this.getResourceType(), "dgf_id")
-                        ;
-                        if (dgfIdProp != null && dgfIdProp.value.equals(dgfFeed.dgf_id)) {
-                            source = existingSource;
+                        FeedSource source = null;
+
+                        // check if a feed already exists with this id
+                        for (FeedSource existingSource : project.getProjectFeedSources()) {
+                            ExternalFeedSourceProperty dgfIdProp =
+                                    ExternalFeedSourceProperty.find(existingSource,
+                                            this.getResourceType(), "dgf_id")
+                            ;
+                            if (dgfIdProp != null && dgfIdProp.value.equals(dgfFeed.dgf_id)) {
+                                source = existingSource;
+                            }
+                        }
+
+                        String feedId = dgfFeed.dgf_id;
+
+                        if (source == null) {
+                            source = new FeedSource(feedId);
+                            LOG.info("Creating new feed source: {}", feedId);
+                        }
+                        else {
+                            source.name = dgfFeed.title;
+                            LOG.info("Syncing properties: {}", feedId);
+                        }
+                        LOG.info("Feed title: {}", dgfFeed.title);
+                        dgfFeed.mapFeedSource(source);
+
+                        source.setName(dgfFeed.title);
+
+                        source.setProject(project);
+
+                        source.save();
+
+                        // create / update the properties
+
+                        for(Field dgfField : dgfFeed.getClass().getDeclaredFields()) {
+                            String fieldName = dgfField.getName();
+                            String fieldValue = dgfField.get(dgfFeed) != null ? dgfField.get(dgfFeed).toString() : null;
+
+                            ExternalFeedSourceProperty.updateOrCreate(source, this.getResourceType(), fieldName, fieldValue);
                         }
                     }
-
-                    String feedId = dgfFeed.dgf_id;
-
-                    if (source == null) {
-                        source = new FeedSource(feedId);
-                        LOG.info("Creating new feed source: {}", feedId);
-                    }
-                    else {
-                        source.name = dgfFeed.title;
-                        LOG.info("Syncing properties: {}", feedId);
-                    }
-                    LOG.info("Feed title: {}", dgfFeed.title);
-                    dgfFeed.mapFeedSource(source);
-
-                    source.setName(dgfFeed.title);
-
-                    source.setProject(project);
-
-                    source.save();
-
-                    // create / update the properties
-
-                    for(Field dgfField : dgfFeed.getClass().getDeclaredFields()) {
-                        String fieldName = dgfField.getName();
-                        String fieldValue = dgfField.get(dgfFeed) != null ? dgfField.get(dgfFeed).toString() : null;
-
-                        ExternalFeedSourceProperty.updateOrCreate(source, this.getResourceType(), fieldName, fieldValue);
-                    }
+                } catch (Exception ex) {
+                    LOG.error("Error reading from datagouvfr API");
+                    ex.printStackTrace();
                 }
-            } catch (Exception ex) {
-                LOG.error("Error reading from datagouvfr API");
-                ex.printStackTrace();
             }
+            while(!next_page.contentEquals("null"));
         }
-        while(!next_page.contentEquals("null"));
 
     }
 

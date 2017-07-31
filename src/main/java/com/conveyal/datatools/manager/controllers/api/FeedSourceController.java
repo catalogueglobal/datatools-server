@@ -278,9 +278,9 @@ public class FeedSourceController {
         return requestFeedSource(req, FeedSource.get(id), action);
     }
     public static FeedSource requestFeedSource(Request req, FeedSource s, String action) {
-        // check if the request is being made to /api/manager/*
+        // check if the request is being made to /api/*/public
         Boolean publicFilter = Boolean.valueOf(req.queryParams("public")) ||
-                req.url().split("/api/manager/*/")[1].startsWith("public");
+                req.url().split("/*/api/*")[1].split("/")[1].contentEquals("public");
 
         Auth0UserProfile userProfile = null;
 

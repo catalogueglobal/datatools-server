@@ -78,7 +78,35 @@ public class DataGouvFrFeed {
     String feed_url;
 
     public DataGouvFrFeed(JsonNode jsonMap){
-        JsonNode resource = jsonMap.get("resources").elements().next();
+        JsonNode resource = null;
+        for (final JsonNode node : jsonMap.get("resources")) {
+            if (node.get("format").asText().contentEquals("GTFS") ||
+                    node.get("format").asText().contentEquals("gtfs")) {
+                resource = node;
+                break;
+            }
+        }
+        if (resource == null) {
+            for (final JsonNode node : jsonMap.get("resources")) {
+                if (node.get("format").asText().contentEquals("ZIP") ||
+                        node.get("format").asText().contentEquals("zip")) {
+                    resource = node;
+                    break;
+                }
+            }
+        }
+        if (resource == null) {
+            for (final JsonNode node : jsonMap.get("resources")) {
+                if (node.get("format").asText().contentEquals("CSV") ||
+                        node.get("format").asText().contentEquals("csv")) {
+                    resource = node;
+                    break;
+                }
+            }
+        }
+        if (resource == null) {
+            resource = jsonMap.get("resources").elements().next();
+        }
 
         this.dataset_url = jsonMap.get("uri").asText();
         this.url = resource.get("url").asText();
