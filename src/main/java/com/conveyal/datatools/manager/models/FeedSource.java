@@ -225,6 +225,7 @@ public class FeedSource extends Model implements Cloneable {
                 String tmp_last_modified = resource.get("last_modified").asText();
                 String tmp_format = resource.get("format").asText();
                 if (!tmp_format.contentEquals("gtfs") &&
+                    !tmp_format.contentEquals("GTFS") &&
                     !tmp_format.contentEquals("csv")) {
                     continue;
                 }
