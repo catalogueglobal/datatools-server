@@ -1,5 +1,6 @@
 package com.conveyal.datatools.manager.extensions.mtc;
 
+import com.conveyal.datatools.manager.extensions.ExternalFeed;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -7,79 +8,86 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * Created by demory on 3/30/16.
  */
 
-public class RtdCarrier {
+public class RtdCarrier implements ExternalFeed {
 
     @JsonProperty
-    String AgencyId;
+    public String AgencyId;
 
     @JsonProperty
-    String AgencyName;
+    public String AgencyName;
 
     @JsonProperty
-    String AgencyPhone;
+    public String AgencyPhone;
 
     @JsonProperty
-    String RttAgencyName;
+    public String RttAgencyName;
 
     @JsonProperty
-    String RttEnabled;
+    public String RttEnabled;
 
     @JsonProperty
-    String AgencyShortName;
+    public String AgencyShortName;
 
     @JsonProperty
-    String AgencyPublicId;
+    public String AgencyPublicId;
 
     @JsonProperty
-    String AddressLat;
+    public String AddressLat;
 
     @JsonProperty
-    String AddressLon;
+    public String AddressLon;
 
     @JsonProperty
-    String DefaultRouteType;
+    public String DefaultRouteType;
 
     @JsonProperty
-    String CarrierStatus;
+    public String CarrierStatus;
 
     @JsonProperty
-    String AgencyAddress;
+    public String AgencyAddress;
 
     @JsonProperty
-    String AgencyEmail;
+    public String AgencyEmail;
 
     @JsonProperty
-    String AgencyUrl;
+    public String AgencyUrl;
 
     @JsonProperty
-    String AgencyFareUrl;
+    public String AgencyFareUrl;
 
     @JsonProperty
-    String EditedBy;
+    public String EditedBy;
 
     @JsonProperty
-    String EditedDate;
+    public String EditedDate;
 
     public RtdCarrier() {
     }
 
-    /*public void mapFeedSource(FeedSource source){
-        source.defaultGtfsId = this.AgencyId;
-        source.shortName = this.AgencyShortName;
-        source.AgencyPhone = this.AgencyPhone;
-        source.RttAgencyName = this.RttAgencyName;
-        source.RttEnabled = this.RttEnabled;
-        source.AgencyShortName = this.AgencyShortName;
-        source.AgencyPublicId = this.AgencyPublicId;
-        source.AddressLat = this.AddressLat;
-        source.AddressLon = this.AddressLon;
-        source.DefaultRouteType = this.DefaultRouteType;
-        source.CarrierStatus = this.CarrierStatus;
-        source.AgencyAddress = this.AgencyAddress;
-        source.AgencyEmail = this.AgencyEmail;
-        source.AgencyUrl = this.AgencyUrl;
-        source.AgencyFareUrl = this.AgencyFareUrl;
+    @Override
+    public String getId() {
+        return AgencyId;
+    }
 
-        source.save();
-    }*/
+    @Override
+    public String getIdKey() {
+        return "AgencyId";
+    }
+
+    @Override
+    public String getFeedUrl() {
+        return null;
+    }
+
+    @Override
+    public String getName() {
+        if (this.AgencyName != null) {
+            return this.AgencyName;
+        } else if (this.AgencyShortName != null) {
+            return this.AgencyShortName;
+        } else {
+            return this.AgencyId;
+        }
+    }
+
 }

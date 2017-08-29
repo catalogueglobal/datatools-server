@@ -7,30 +7,21 @@ import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.Project;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
+
+import static spark.Spark.halt;
 
 /**
  * Created by demory on 3/31/16.
  */
 public class TransitFeedsFeedResource implements ExternalFeedResource {
 
-    public static final Logger LOG = LoggerFactory.getLogger(TransitFeedsFeedResource.class);
+    private static final String apiKey = DataManager.getConfigPropertyAsText("extensions.transitfeeds.key");
 
-    private String api, apiKey;
-
-    public TransitFeedsFeedResource () {
-        api = DataManager.getConfigPropertyAsText("extensions.transitfeeds.api");
-        apiKey = DataManager.getConfigPropertyAsText("extensions.transitfeeds.key");
-    }
+    public TransitFeedsFeedResource () {}
 
     @Override
     public String getResourceType() {
@@ -40,122 +31,74 @@ public class TransitFeedsFeedResource implements ExternalFeedResource {
     @Override
     public void importFeedsForProject(Project project, String authHeader) {
         LOG.info("Importing feeds from TransitFeeds");
-
-        URL url;
-        ObjectMapper mapper = new ObjectMapper();
-        // multiple pages for transitfeeds because of 100 feed limit per page
+        // multiple pages for TransitFeeds because of 100 feed limit per page
         Boolean nextPage = true;
-        int count = 1;
+        // page count starts at 1
+        int page = 1;
 
         do {
-            try {
-                url = new URL(api + "?key=" + apiKey + "&limit=100" + "&page=" + String.valueOf(count));
-            } catch (MalformedURLException ex) {
-                LOG.error("Could not construct URL for TransitFeeds API");
-                return;
-            }
+            Map<String, String> params = new HashMap<>();
+            params.put("key", apiKey);
+            params.put("limit", String.valueOf(100));
+            params.put("page", String.valueOf(page));
+            params.put("type", "gtfs");
+            String json = getFeedsJson(getUrl(params), null);
+            if (json == null) return;
 
-
-            StringBuffer response = new StringBuffer();
-
-            try {
-                HttpURLConnection con = (HttpURLConnection) url.openConnection();
-
-                // optional default is GET
-                con.setRequestMethod("GET");
-
-                //add request header
-                con.setRequestProperty("User-Agent", "User-Agent");
-
-                int responseCode = con.getResponseCode();
-                System.out.println("\nSending 'GET' request to URL : " + url);
-                System.out.println("Response Code : " + responseCode);
-
-                BufferedReader in = new BufferedReader(
-                        new InputStreamReader(con.getInputStream()));
-                String inputLine;
-
-                while ((inputLine = in.readLine()) != null) {
-                    response.append(inputLine);
-                }
-                in.close();
-            } catch (IOException ex) {
-                LOG.error("Could not read from Transit Feeds API");
-                return;
-            }
-
-            String json = response.toString();
-            JsonNode transitFeedNode = null;
+            JsonNode transitFeedNode;
             try {
                 transitFeedNode = mapper.readTree(json);
             } catch (IOException ex) {
                 LOG.error("Error parsing TransitFeeds JSON response");
+                halt(400);
                 return;
             }
 
+            // iterate over TransitFeeds json
             for (JsonNode feed : transitFeedNode.get("results").get("feeds")) {
-
-                // test that feed is in fact GTFS
-                if (!feed.get("t").asText().contains("GTFS")){
-                    continue;
+                TransitFeedsFeed externalFeed = constructTransitFeed(project, feed);
+                if (externalFeed != null) {
+                    System.out.println(externalFeed.getId());
+                    importFeed(project, externalFeed);
                 }
-
-                // test that feed falls in bounding box (if box exists)
-                if (project.north != null) {
-                    Double lat = feed.get("l").get("lat").asDouble();
-                    Double lng = feed.get("l").get("lng").asDouble();
-                    if (lat < project.south || lat > project.north || lng < project.west || lng > project.east) {
-                        continue;
-                    }
-                }
-
-                FeedSource source = null;
-                String tfId = feed.get("id").asText();
-
-                // check if a feed already exists with this id
-                for (FeedSource existingSource : project.getProjectFeedSources()) {
-                    ExternalFeedSourceProperty idProp =
-                            ExternalFeedSourceProperty.find(existingSource, this.getResourceType(), "id");
-                    if (idProp != null && idProp.value.equals(tfId)) {
-                        source = existingSource;
-                    }
-                }
-
-                String feedName;
-                feedName = feed.get("t").asText();
-
-                if (source == null) source = new FeedSource(feedName);
-                else source.name = feedName;
-
-                source.retrievalMethod = FeedSource.FeedRetrievalMethod.FETCHED_AUTOMATICALLY;
-                source.setName(feedName);
-                System.out.println(source.name);
-
-                try {
-                    if (feed.get("u") != null) {
-                        if (feed.get("u").get("d") != null) {
-                            source.url = new URL(feed.get("u").get("d").asText());
-                        } else if (feed.get("u").get("i") != null) {
-                            source.url = new URL(feed.get("u").get("i").asText());
-                        }
-                    }
-                } catch (MalformedURLException ex) {
-                    LOG.error("Error constructing URLs from TransitFeeds API response");
-                }
-
-                source.setProject(project);
-                source.save();
-
-                // create/update the external props
-                ExternalFeedSourceProperty.updateOrCreate(source, this.getResourceType(), "id", tfId);
-
             }
             if (transitFeedNode.get("results").get("page") == transitFeedNode.get("results").get("numPages")){
                 LOG.info("finished last page of transitfeeds");
                 nextPage = false;
             }
-            count++;
+            page++;
         } while(nextPage);
+    }
+
+    /**
+     * TransitFeeds API is nested, so we just manually construct feeds rather than worry about complicated
+     * deserialization. API docs: http://transitfeeds.com/api/swagger/#!/default/getFeeds
+     * @param project
+     * @param json
+     * @return
+     */
+    private TransitFeedsFeed constructTransitFeed(Project project, JsonNode json) {
+        // test that feed falls in bounding box (if box exists)
+        if (project.north != null) {
+            Double lat = json.get("l").get("lat").asDouble();
+            Double lng = json.get("l").get("lng").asDouble();
+            if (lat < project.south || lat > project.north || lng < project.west || lng > project.east) {
+                return null;
+            }
+        }
+
+        String feedId, feedName, feedUrl = null;
+        feedId = json.get("id").asText();
+        feedName = json.get("t").asText();
+
+        if (json.get("u") != null) {
+            if (json.get("u").get("d") != null) {
+                feedUrl = json.get("u").get("d").asText();
+            } else if (json.get("u").get("i") != null) {
+                feedUrl = json.get("u").get("i").asText();
+            }
+        }
+        return new TransitFeedsFeed(feedId, feedName, feedUrl);
     }
 
     @Override

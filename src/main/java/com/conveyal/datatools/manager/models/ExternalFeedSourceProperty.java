@@ -3,9 +3,11 @@ package com.conveyal.datatools.manager.models;
 import com.conveyal.datatools.manager.persistence.DataStore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonView;
 
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Created by demory on 3/30/16.
@@ -15,8 +17,6 @@ public class ExternalFeedSourceProperty extends Model {
     private static final long serialVersionUID = 1L;
 
     private static DataStore<ExternalFeedSourceProperty> propertyStore = new DataStore<>("externalFeedSourceProperties");
-
-    private FeedSource feedSource;
 
     // constructor for data dump load
     public ExternalFeedSourceProperty() {}
@@ -31,7 +31,7 @@ public class ExternalFeedSourceProperty extends Model {
 
     @JsonProperty
     public String getFeedSourceId() {
-        return feedSource != null ? feedSource.id : feedSourceId;
+        return feedSourceId;
     }
 
     public String resourceType;
@@ -62,6 +62,20 @@ public class ExternalFeedSourceProperty extends Model {
 
     public static ExternalFeedSourceProperty find(FeedSource source, String resourceType, String name) {
         return propertyStore.getById(source.id + "_" +resourceType + "_" + name);
+    }
+
+    /**
+     * Get multiple fields for a feed source and resource type.  Used for mapping to POJOs as needed.
+     */
+    public static Map<String, String> findMultiple(FeedSource source, String resourceType) {
+        Map<String, String> map = new HashMap<>();
+        getAll().stream()
+                .filter(field ->
+                        Objects.equals(field.resourceType, resourceType) &&
+                        Objects.equals(field.feedSourceId, source.id)
+                )
+                .forEach(field -> map.put(field.name, field.value));
+        return map;
     }
 
     public static ExternalFeedSourceProperty updateOrCreate(FeedSource source, String resourceType, String name, String value) {
