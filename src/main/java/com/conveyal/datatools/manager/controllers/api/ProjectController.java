@@ -509,10 +509,11 @@ public class ProjectController {
         if(DataManager.feedResources.containsKey(syncType)) {
             DataManager.feedResources.get(syncType).importFeedsForProject(proj, req.headers("Authorization"));
             return proj;
+        } else {
+            LOG.warn("Sync type " + syncType + " not included in server settings.");
+            halt(404, SparkUtils.formatJSON("Error syncing with " + syncType));
+            return null;
         }
-
-        halt(404);
-        return null;
     }
 
     public static ScheduledFuture scheduleAutoFeedFetch (String id, int hour, int minute, int intervalInDays, String timezoneId){
