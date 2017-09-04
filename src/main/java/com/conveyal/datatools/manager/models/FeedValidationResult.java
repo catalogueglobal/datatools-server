@@ -1,10 +1,10 @@
 package com.conveyal.datatools.manager.models;
 
 import com.conveyal.gtfs.GTFSFeed;
-import com.conveyal.gtfs.model.ValidationResult;
 import com.conveyal.gtfs.stats.FeedStats;
 import com.conveyal.gtfs.validator.json.LoadStatus;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.Iterators;
 
 import java.awt.geom.Rectangle2D;
 import java.io.Serializable;
@@ -33,10 +33,10 @@ public class FeedValidationResult implements Serializable {
 
     // legacy fields included for backwards compatibility (not currently used)
     public String feedFileName;
-    public ValidationResult routes;
-    public ValidationResult stops;
-    public ValidationResult trips;
-    public ValidationResult shapes;
+//    public ValidationResult routes;
+//    public ValidationResult stops;
+//    public ValidationResult trips;
+//    public ValidationResult shapes;
 
     // constructor for data dump load
     public FeedValidationResult() {}
@@ -46,6 +46,8 @@ public class FeedValidationResult implements Serializable {
         this.loadStatus = loadStatus;
         this.loadFailureReason = loadFailureReason;
     }
+
+    // TODO: construct FeedValidationResult from sql-loader Feed (or FeedInfo)
 
     public FeedValidationResult(GTFSFeed feed, FeedStats stats) {
         this.agencies = stats.getAllAgencies().stream().map(agency -> agency.agency_id).collect(Collectors.toList());
@@ -91,4 +93,9 @@ public class FeedValidationResult implements Serializable {
         this.stopTimesCount = stats.getStopTimesCount();
         this.errorCount = feed.errors.size();
     }
+
+//    /** Why a GTFS feed failed to load */
+//    public enum LoadStatus {
+//        SUCCESS, INVALID_ZIP_FILE, OTHER_FAILURE, MISSING_REQUIRED_FIELD, INCORRECT_FIELD_COUNT_IMPROPER_QUOTING;
+//    }
 }

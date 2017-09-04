@@ -11,12 +11,14 @@ import com.conveyal.datatools.manager.extensions.ExternalFeedResource;
 import com.conveyal.datatools.manager.extensions.mtc.MtcFeedResource;
 import com.conveyal.datatools.manager.extensions.transitfeeds.TransitFeedsFeedResource;
 import com.conveyal.datatools.manager.extensions.transitland.TransitLandFeedResource;
+import com.conveyal.datatools.manager.extensions.datagouvfr.DataGouvFrFeedResource;
 
 import com.conveyal.datatools.common.status.MonitorableJob;
 import com.conveyal.datatools.manager.models.Project;
 import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.conveyal.datatools.manager.utils.CorsFilter;
-import com.conveyal.gtfs.api.ApiMain;
+import com.conveyal.gtfs.GTFS;
+import com.conveyal.gtfs.api.GraphQLMain;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
@@ -27,6 +29,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import spark.utils.IOUtils;
 
+import javax.sql.DataSource;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -79,6 +82,8 @@ public class DataManager {
     public static final String DEFAULT_ENV = "configurations/default/env.yml";
     public static final String DEFAULT_CONFIG = "configurations/default/server.yml";
 
+    public static DataSource GTFS_DATA_SOURCE;
+
     public static void main(String[] args) throws IOException {
 
         // load config
@@ -89,6 +94,12 @@ public class DataManager {
             port(Integer.parseInt(getConfigPropertyAsText("application.port")));
         }
         useS3 = "true".equals(getConfigPropertyAsText("application.data.use_s3_storage"));
+
+        GTFS_DATA_SOURCE = GTFS.createDataSource(
+                getConfigPropertyAsText("GTFS_DATABASE_URL"),
+                getConfigPropertyAsText("GTFS_DATABASE_USER"),
+                getConfigPropertyAsText("GTFS_DATABASE_PASSWORD")
+        );
 
         // initialize map of auto fetched projects
         for (Project p : Project.getAll()) {
@@ -104,17 +115,9 @@ public class DataManager {
         awsRole = getConfigPropertyAsText("application.data.aws_role");
         bucketFolder = FeedStore.s3Prefix;
 
-        // initialize gtfs-api
-        if (useS3) {
-            LOG.info("Initializing gtfs-api for bucket {}/{} and cache dir {}", feedBucket, bucketFolder, FeedStore.basePath);
-            ApiMain.initialize(feedBucket, bucketFolder, FeedStore.basePath.getAbsolutePath());
-        }
-        else {
-            LOG.info("Initializing gtfs-api cache locally (no s3 bucket) {}", FeedStore.basePath);
-            // NOTE: null value must be passed here (even if feedBucket is not null)
-            // because otherwise zip files will be DELETED!!! on removal from GTFSCache.
-            ApiMain.initialize(null, FeedStore.basePath.getAbsolutePath());
-        }
+        // initialize GTFS GraphQL API service
+        GraphQLMain.initialize(GTFS_DATA_SOURCE, API_PREFIX);
+        LOG.info("Initialized gtfs-api at localhost:port{}", API_PREFIX);
 
         registerRoutes();
 
@@ -289,6 +292,11 @@ public class DataManager {
         if (isExtensionEnabled("transitfeeds")) {
             LOG.info("Registering TransitFeeds Resource");
             registerExternalResource(new TransitFeedsFeedResource());
+        }
+
+        if (isExtensionEnabled("datagouvfr")) {
+            LOG.info("Registering DatagouvFr Resource");
+            registerExternalResource(new DataGouvFrFeedResource());
         }
     }
     private static void loadConfig (String[] args) throws IOException {
