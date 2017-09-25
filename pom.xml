@@ -288,6 +288,34 @@
             <scope>test</scope>
         </dependency>
 
+        <!--SQL Server JDBC connection driver -->
+        <dependency>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <artifactId>mssql-jdbc</artifactId>
+            <version>6.2.1.jre8</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.geotools.jdbc</groupId>
+            <artifactId>gt-jdbc-sqlserver</artifactId>
+            <version>14.3</version>
+        </dependency>
+
+        <!--Extension of CRS listing that includes Lisboa Hayford Gauss IPCC (ESRI:102165) -->
+        <dependency>
+            <groupId>org.geotools</groupId>
+            <artifactId>gt-epsg-extension</artifactId>
+            <version>9.0</version>
+        </dependency>
+
+
+
+        <!-- https://mvnrepository.com/artifact/org.openstreetmap.osmosis/osmosis-core -->
+        <!--<dependency>-->
+            <!--<groupId>org.openstreetmap.osmosis</groupId>-->
+            <!--<artifactId>osmosis-core</artifactId>-->
+            <!--<version>0.45</version>-->
+        <!--</dependency>-->
     </dependencies>
 
 </project>
