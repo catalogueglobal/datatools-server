@@ -4,7 +4,14 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.conveyal.gtfs.GTFS;
 import com.conveyal.gtfs.GTFSFeed;
+import com.conveyal.gtfs.model.Agency;
+import com.conveyal.gtfs.model.Calendar;
+import com.conveyal.gtfs.model.CalendarDate;
+import com.conveyal.gtfs.model.Route;
+import com.conveyal.gtfs.model.Service;
 import com.conveyal.gtfs.model.Stop;
+import com.conveyal.gtfs.model.StopTime;
+import com.conveyal.gtfs.model.Trip;
 import com.vividsolutions.jts.geom.Coordinate;
 import org.geotools.data.DataStore;
 import org.geotools.data.DataStoreFinder;
@@ -13,6 +20,7 @@ import org.geotools.feature.FeatureCollection;
 import org.geotools.geometry.jts.JTS;
 import org.geotools.referencing.CRS;
 import org.geotools.referencing.crs.DefaultGeographicCRS;
+import org.mapdb.Fun;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 import org.opengis.filter.Filter;
@@ -20,14 +28,21 @@ import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.operation.MathTransform;
 import org.opengis.referencing.operation.TransformException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.io.File;
 import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -38,6 +53,7 @@ import static com.conveyal.datatools.manager.utils.AlgarveConstants.*;
  */
 public class AlgarveMain {
     private static final String LIMIT = "TOP 100";
+    public static final Logger LOG = LoggerFactory.getLogger(AlgarveMain.class);
     private static Connection connection;
     private static AmazonS3 s3;
     private static DataSource dataSource;
@@ -67,6 +83,8 @@ public class AlgarveMain {
             String dir = args[5];
             loadBakFile(bucket, bakFile, dir);
             restoreSQLServerDBFromS3(bucket, bakFile, server, username, password);
+            // FIXME: maybe we just run some standard SQL script on the import here.
+//            addSupplementaryFields(server, username, password);
         }
 
         GTFSFeed gtfsFeed = new GTFSFeed();
@@ -78,41 +96,164 @@ public class AlgarveMain {
 //        dataSource
 
 
-        loadTable(gtfsFeed, "dbo.Paragem");
+        loadTables(gtfsFeed);
 
         gtfsFeed.toFile("/Users/landon/Downloads/algarve.zip");
 
     }
 
-    private static void loadTable(GTFSFeed gtfsFeed, String table) throws FactoryException, SQLException, TransformException {
+    private static void loadTables(GTFSFeed gtfsFeed) throws FactoryException, SQLException, TransformException {
 
         // FIXME: CRS may need to be defined differently. Transform has "lenient" param set to true because
         // Bursa-Wolf parameters are "missing"? http://docs.geotools.org/stable/userguide/faq.html#q-bursa-wolf-parameters-required
         CoordinateReferenceSystem sourceCRS = CRS.decode("EPSG:102165");
+        MathTransform lisboaToWGS84 = CRS.findMathTransform(sourceCRS, DefaultGeographicCRS.WGS84, true);
 
+        // LOAD STOPS
         // TODO: remove limit (set to 100 to prevent selecting all items)
-        String fields = String.join(",", STOP_ID, SHAPE, NAME);
-        String selectSQL = String.format("SELECT %s %s FROM %s", LIMIT, fields, table);
-        PreparedStatement preparedStatement = connection.prepareStatement(selectSQL);
-        ResultSet results = preparedStatement.executeQuery();
+        String stopFields = String.join(",", STOP_ID, SHAPE, NAME);
+        String selectStops = String.format("SELECT %s %s FROM %s", LIMIT, stopFields, STOPS_TABLE);
+        PreparedStatement preparedStatementStops = connection.prepareStatement(selectStops);
+        ResultSet stopResults = preparedStatementStops.executeQuery();
 
-        MathTransform transform = CRS.findMathTransform(sourceCRS, DefaultGeographicCRS.WGS84, true);
-
-        // iterate over stops from resultSet and from shapefile
-        while (results.next()) {
-            String id = results.getString(STOP_ID);
-            String name = results.getString(NAME);
-            String geom = results.getString(LAT_LNG);
+        // iterate over stops from resultSet
+        while (stopResults.next()) {
+            String id = stopResults.getString(STOP_ID);
+            String name = stopResults.getString(NAME);
+            String geom = stopResults.getString(LAT_LNG);
             // geom string looks something like POINT (-41849.9930 89209.99109)
+            // TODO: split on any number of occurrences (of whitespace/parens)
             String[] geomArray = geom.split("\\(|\\)|\\s");
             Coordinate coordinate = new Coordinate(Double.parseDouble(geomArray[3]), Double.parseDouble(geomArray[2]));
-            Coordinate targetCoordinate = JTS.transform( coordinate, null, transform );
+            Coordinate targetCoordinate = JTS.transform( coordinate, null, lisboaToWGS84 );
             Stop stop = new Stop();
             stop.stop_id = id;
             stop.stop_name = name;
             stop.stop_lon = targetCoordinate.x;
             stop.stop_lat = targetCoordinate.y;
+            LOG.info("Importing stop id: {}, name: {}, lat_lng: {}, {}", id, name, stop.stop_lat, stop.stop_lon);
             gtfsFeed.stops.put(id, stop);
+        }
+
+        // LOAD AGENCY (there is only one and it is defined by constants rather than SQL results)
+        Agency agency = new Agency();
+        final String agencyId = "AMAL";
+        agency.agency_id = agencyId;
+        agency.agency_name = "Comunidade Intermunicipal do Algarve";
+        agency.agency_timezone = "Europe/Lisbon";
+        try {
+            agency.agency_url = new URL("http://www.amal.pt"); // constant
+        } catch (MalformedURLException e) {
+            e.printStackTrace();
+        }
+        LOG.info("Importing agency id: {}, name: {}", agencyId, agency.agency_name);
+        gtfsFeed.agency.put(agencyId, agency);
+
+
+        // LOAD ROUTES
+        // TODO: remove limit (set to 100 to prevent selecting all items)
+        String routeFields = String.join(",", ROUTE_ID, ROUTE_SHORT_NAME, NAME);
+        String routeSelect = String.format("SELECT %s %s FROM %s", LIMIT, routeFields, ROUTES_TABLE);
+        PreparedStatement routePreparedStatement = connection.prepareStatement(routeSelect);
+        ResultSet routeResults = routePreparedStatement.executeQuery();
+
+        // iterate over routes from resultSet
+        while (routeResults.next()) {
+            Route route = new Route();
+            String id = routeResults.getString(ROUTE_ID);
+            route.agency_id = agencyId; // From constant field above
+            route.route_id = id;
+            route.route_short_name = routeResults.getString(ROUTE_SHORT_NAME);
+            route.route_long_name = routeResults.getString(NAME);
+            LOG.info("Importing route id: {}, name: {}", id, route.route_short_name);
+            gtfsFeed.routes.put(id, route);
+        }
+
+        // LOAD TRIPS
+        // TODO: remove limit (set to 100 to prevent selecting all items)
+        String tripFields = String.join(",", ROUTE_ID, TRIP_ID, SERVICE_ID);
+        String tripSelect = String.format("SELECT %s %s FROM %s", LIMIT, tripFields, TRIPS_TABLE);
+        PreparedStatement tripPreparedStatement = connection.prepareStatement(tripSelect);
+        ResultSet tripResults = tripPreparedStatement.executeQuery();
+
+        // iterate over trips from resultSet
+        while (tripResults.next()) {
+            Trip trip = new Trip();
+            String id = tripResults.getString(TRIP_ID);
+            trip.trip_id = id;
+            trip.route_id = tripResults.getString(ROUTE_ID);
+            trip.service_id = tripResults.getString(SERVICE_ID);
+            LOG.info("Importing trip id: {}, route: {}", id, trip.route_id);
+            gtfsFeed.trips.put(id, trip);
+        }
+
+        // LOAD CALENDARS
+        // TODO: remove limit (set to 100 to prevent selecting all items)
+        String calendarFields = String.join(",", SERVICE_ID, START_DATE, END_DATE);
+        // TODO: make this a join select on calendars and frequencies
+        String calendarSelect = String.format("SELECT %s %s FROM %s", LIMIT, calendarFields, CALENDARS_TABLE);
+        PreparedStatement calendarPreparedStatement = connection.prepareStatement(calendarSelect);
+        ResultSet calendarResults = calendarPreparedStatement.executeQuery();
+
+        DateFormat dateFormat = new SimpleDateFormat("yyyyMMdd");
+
+        // iterate over calendars from resultSet
+        while (calendarResults.next()) {
+            Calendar calendar = new Calendar();
+            String id = calendarResults.getString(SERVICE_ID);
+            Service service = gtfsFeed.services.computeIfAbsent(id, Service::new);
+            calendar.service_id = id;
+            // TODO: parse DOW values
+            calendar.start_date = Integer.parseInt(dateFormat.format(calendarResults.getDate(START_DATE)));
+            calendar.end_date = Integer.parseInt(dateFormat.format(calendarResults.getDate(END_DATE)));
+            LOG.info("Importing calendar id: {}, from: {}, to: {}", id, calendar.start_date, calendar.end_date);
+
+            gtfsFeed.services.put(id, service);
+        }
+
+        // LOAD CALENDAR_DATES
+        // TODO: remove limit (set to 100 to prevent selecting all items)
+        String calendarDateFields = String.join(",", SERVICE_ID, START_DATE, END_DATE);
+        // TODO: make this a join select on calendars and frequencies
+        String calendarDateSelect = String.format("SELECT %s %s FROM %s", LIMIT, calendarDateFields, CALENDARS_TABLE);
+        PreparedStatement calendarDatePreparedStatement = connection.prepareStatement(calendarDateSelect);
+        ResultSet calendarDateResults = calendarDatePreparedStatement.executeQuery();
+
+        // iterate over calendar dates from resultSet
+        while (calendarDateResults.next()) {
+            CalendarDate calendarDate = new CalendarDate();
+            String id = calendarDateResults.getString(SERVICE_ID);
+            Service service = gtfsFeed.services.computeIfAbsent(id, Service::new);
+            calendarDate.service_id = id;
+            // TODO: date field maintained in separate Holidays table?
+//            calendarDate.date = ????
+            //TODO: New field in Frequencias table H populated by the result of the following operation
+            // IF N2 minus F2 = 1 THEN EQUALS 2, but IF N2 minus F2 = -1 THEN EQUALS 1
+//            calendarDate.exception_type =
+            LOG.info("Importing calendarDate id: {}, date: {}, type: {}", id, calendarDate.date, calendarDate.exception_type);
+
+            gtfsFeed.services.put(id, service);
+        }
+
+
+        // LOAD STOP TIMES
+        // TODO: remove limit (set to 100 to prevent selecting all items)
+        String stopTimeFields = String.join(",", TRIP_ID, ARRIVAL_TIME, STOP_SEQUENCE);
+        // TODO: make this a join select on calendars and RTrocoCarreira
+        String stopTimeSelect = String.format("SELECT %s %s FROM %s", LIMIT, stopTimeFields, CALENDARS_TABLE);
+        PreparedStatement stopTimePreparedStatement = connection.prepareStatement(stopTimeSelect);
+        ResultSet stopTimeResults = stopTimePreparedStatement.executeQuery();
+
+        // iterate over stopTimes from resultSet
+        while (stopTimeResults.next()) {
+            StopTime stopTime = new StopTime();
+            stopTime.trip_id = stopTimeResults.getString(TRIP_ID);
+            stopTime.arrival_time = stopTimeResults.getInt(ARRIVAL_TIME);
+            stopTime.departure_time = stopTimeResults.getInt(ARRIVAL_TIME); // Same as arrival
+            stopTime.stop_sequence = stopTimeResults.getInt(STOP_SEQUENCE);
+            LOG.info("Importing stopTime trip_id: {}, sequence: {}", stopTime.trip_id, stopTime.stop_sequence);
+
+            gtfsFeed.stop_times.put(new Fun.Tuple2(stopTime.trip_id, stopTime.stop_sequence), stopTime);
         }
     }
 
