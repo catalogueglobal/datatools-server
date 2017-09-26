@@ -2,6 +2,7 @@ package com.conveyal.datatools.manager.controllers.api;
 
 import com.conveyal.datatools.common.utils.SparkUtils;
 import com.conveyal.datatools.manager.DataManager;
+import com.conveyal.datatools.manager.auth.Auth0Connection;
 import com.conveyal.datatools.manager.auth.Auth0UserProfile;
 import com.conveyal.datatools.manager.jobs.FetchSingleFeedJob;
 import com.conveyal.datatools.manager.jobs.NotifyUsersForSubscriptionJob;
@@ -277,10 +278,17 @@ public class FeedSourceController {
         return requestFeedSource(req, FeedSource.get(id), action);
     }
     public static FeedSource requestFeedSource(Request req, FeedSource s, String action) {
-        Auth0UserProfile userProfile = req.attribute("user");
+        // check if the request is being made to /api/manager/*
         Boolean publicFilter = Boolean.valueOf(req.queryParams("public")) ||
-                req.url().split("/api/*/")[1].startsWith("public");
-//        System.out.println(req.url().split("/api/manager/")[1].startsWith("public"));
+                req.url().split("/api/manager/*/")[1].startsWith("public");
+
+        Auth0UserProfile userProfile = null;
+
+        // can't check for user in public
+        if (!publicFilter) {
+            Auth0Connection.checkUser(req);
+            userProfile = req.attribute("user");
+        }
 
         // check for null feedSource
         if (s == null)
@@ -289,17 +297,17 @@ public class FeedSourceController {
         boolean authorized;
         switch (action) {
             case "create":
-                authorized = userProfile.canAdministerProject(s.projectId, orgId);
+                authorized = userProfile != null && userProfile.canAdministerProject(s.projectId, orgId);
                 break;
             case "manage":
-                authorized = userProfile.canManageFeed(orgId, s.projectId, s.id);
+                authorized = userProfile != null && userProfile.canManageFeed(orgId, s.projectId, s.id);
                 break;
             case "edit":
-                authorized = userProfile.canEditGTFS(orgId, s.projectId, s.id);
+                authorized = userProfile != null && userProfile.canEditGTFS(orgId, s.projectId, s.id);
                 break;
             case "view":
                 if (!publicFilter) {
-                    authorized = userProfile.canViewFeed(orgId, s.projectId, s.id);
+                    authorized = userProfile != null && userProfile.canViewFeed(orgId, s.projectId, s.id);
                 } else {
                     authorized = false;
                 }
