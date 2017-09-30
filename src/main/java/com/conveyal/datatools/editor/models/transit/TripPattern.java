@@ -184,9 +184,25 @@ public class TripPattern extends Model implements Cloneable, Serializable {
             }
 
             // insert a skipped stop at the difference location
+            String newStopTimeId = newStops.get(differenceLocation).stopId;
             
             for (Trip trip : tx.getTripsByPattern(originalTripPattern.id)) {
-                trip.stopTimes.add(differenceLocation, null);
+                // create a new stop time
+                StopTime newStopTime = new StopTime();
+                newStopTime.stopId = newStopTimeId;
+
+                // get the reference stop time from which to assign data
+                // if it's the new first stop, then get the original first stop
+                // otherwise get the previous stop
+                boolean isNewFirstStop = differenceLocation == 0;
+                StopTime oldReferenceStopTime = trip.stopTimes.get(isNewFirstStop ? 1 : differenceLocation - 1);
+                newStopTime.arrivalTime = isNewFirstStop ? oldReferenceStopTime.arrivalTime : oldReferenceStopTime.departureTime;
+                newStopTime.departureTime = isNewFirstStop ? oldReferenceStopTime.arrivalTime : oldReferenceStopTime.departureTime;
+                newStopTime.dropOffType = oldReferenceStopTime.dropOffType;
+                newStopTime.pickupType = oldReferenceStopTime.pickupType;
+                newStopTime.stopHeadsign = oldReferenceStopTime.stopHeadsign;
+
+                trip.stopTimes.add(differenceLocation, newStopTime);
                 // TODO: safe?
                 tx.trips.put(trip.id, trip);
             }            
