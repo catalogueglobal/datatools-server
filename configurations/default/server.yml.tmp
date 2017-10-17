@@ -35,3 +35,4 @@ extensions:
     enabled: true
     api: http://api.transitfeeds.com/v1/getFeeds
     key: your-api-key
+DISABLE_AUTH: true

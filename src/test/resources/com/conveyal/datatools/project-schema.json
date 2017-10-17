@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "definitions": {
+    "latitude": {
+      "maximum": 90,
+      "minimum": -90,
+      "type": "number"
+    },
+    "longitude": {
+      "maximum": 180,
+      "minimum": -180,
+      "type": "number"
+    }
+  },
+  "type": "object",
+  "properties": {
+    "autoFetchFeeds": {
+      "type": "boolean"
+    },
+    "autoFetchHour": {
+      "type": "integer"
+    },
+    "autoFetchMinute": {
+      "type": "integer"
+    },
+    "defaultLanguage": {
+      "type": "string"
+    },
+    "defaultTimeZone": {
+      "type": "string"
+    },
+    "defaultLocationLat": {
+      "allOf": [{
+        "$ref": "#/definitions/latitude"
+      }]
+    },
+    "defaultLocationLon": {
+      "allOf": [{
+        "$ref": "#/definitions/longitude"
+      }]
+    },
+    "east": {
+      "allOf": [{
+        "$ref": "#/definitions/longitude"
+      }]
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "north": {
+      "allOf": [{
+        "$ref": "#/definitions/latitude"
+      }]
+    },
+    "organizationId": {
+      "type": "string"
+    },
+    "osmEast": {
+      "allOf": [{
+        "$ref": "#/definitions/longitude"
+      }]
+    },
+    "osmNorth": {
+      "allOf": [{
+        "$ref": "#/definitions/latitude"
+      }]
+    },
+    "osmSouth": {
+      "allOf": [{
+        "$ref": "#/definitions/latitude"
+      }]
+    },
+    "osmWest": {
+      "allOf": [{
+        "$ref": "#/definitions/longitude"
+      }]
+    },
+    "south": {
+      "allOf": [{
+        "$ref": "#/definitions/latitude"
+      }]
+    },
+    "west": {
+      "allOf": [{
+        "$ref": "#/definitions/longitude"
+      }]
+    },
+    "useCustomOsmBounds": {
+      "type": "boolean"
+    }
+  }
+}
