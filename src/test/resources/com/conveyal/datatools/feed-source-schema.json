@@ -1,0 +1,29 @@
+{
+  "type" : "object",
+  "properties" : {
+    "retrievalMethod" : {
+      "type" : "string"
+    },
+    "deployable" : {
+      "type" : "boolean"
+    },
+    "id" : {
+      "type" : "string"
+    },
+    "projectId" : {
+      "type" : "string"
+    },
+    "url" : {
+      "type" : "string"
+    },
+    "snapshotVersion" : {
+      "type" : "string"
+    },
+    "public" : {
+      "type" : "boolean"
+    },
+    "name" : {
+      "type" : "string"
+    }
+  }
+}
