@@ -63,7 +63,9 @@ public class FeedVersionController  {
     private static ObjectMapper mapper = new ObjectMapper();
     public static JsonManager<FeedVersion> json =
             new JsonManager<FeedVersion>(FeedVersion.class, JsonViews.UserInterface.class);
-    private static Set<String> readingNetworkVersionList = new HashSet<>();
+    private static Set<String> networkBuildInProgress = new HashSet<>();
+    private static Set<String> networkReadInProgress = new HashSet<>();
+    private static Map<String, Long> networkCacheQueue = new HashMap();
 
     /**
      * Grab this feed version.
@@ -226,50 +228,121 @@ public class FeedVersionController  {
     }
 
     public static JsonNode getIsochrones(Request req, Response res) {
-        FeedVersion version = requestFeedVersion(req, "view");
+        if (!DataManager.isModuleEnabled("validator")) {
+            halt(400, SparkUtils.formatJSON("Isochrone generation not enabled in this application."));
+        }
 
         Auth0UserProfile userProfile = req.attribute("user");
-        // if tn is null, check first if it's being built, else try reading in tn
-        if (version.transportNetwork == null) {
-            buildOrReadTransportNetwork(version, userProfile);
-        }
-        else {
+        FeedVersion version = requestFeedVersion(req, "view");
+        TransportNetwork transportNetwork = buildOrReadTransportNetwork(version, userProfile);
+        if (transportNetwork != null) {
             // remove version from list of reading network
-            if (readingNetworkVersionList.contains(version.id)) {
-                readingNetworkVersionList.remove(version.id);
+            if (networkBuildInProgress.contains(version.id)) {
+                networkBuildInProgress.remove(version.id);
             }
             AnalystClusterRequest clusterRequest = buildProfileRequest(req);
-            return getRouterResult(version.transportNetwork, clusterRequest);
+            return getRouterResult(transportNetwork, clusterRequest);
+        } else {
+            halt(202, SparkUtils.formatJSON("Reading transport network, please try again later."));
         }
         return null;
     }
 
-    private static void buildOrReadTransportNetwork(FeedVersion version, Auth0UserProfile userProfile) {
-        InputStream is = null;
-        try {
-            if (!readingNetworkVersionList.contains(version.id)) {
-                is = new FileInputStream(version.getTransportNetworkPath());
-                readingNetworkVersionList.add(version.id);
+    public static TransportNetwork buildOrReadTransportNetwork(FeedVersion version, Auth0UserProfile userProfile) {
+            if (DataManager.transportNetworkCache.containsTransportNetwork(version.id)) {
+                // Simplest case. Network has already been loaded in cache, so we just return it.
                 try {
-//                    version.transportNetwork = TransportNetwork.read(is);
-                    ReadTransportNetworkJob rtnj = new ReadTransportNetworkJob(version, userProfile.getUser_id());
-                    DataManager.heavyExecutor.execute(rtnj);
+                    if (networkReadInProgress.contains(version.id)) {
+                        networkReadInProgress.remove(version.id);
+                    }
+                    return DataManager.transportNetworkCache.getTransportNetwork(version.id);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    LOG.error("Unknown error accessing transport network.", e);
+                    halt(400, SparkUtils.formatJSON("Unknown error accessing transport network."));
+                }
+            } else {
+                // TransportNetwork has not been read before and a cache load has not been triggered.
+                // TODO: add logic that keeps transport networks from being evicted while being used (below code checks load time).
+//                // This check is performed because the loading cache does not evict items even if they have expired.
+//                // This is explained here: https://github.com/google/guava/wiki/CachesExplained#when-does-cleanup-happen
+//                String waitMessage = "Sorry, isochrones for this feed are not available at the moment. Please wait approximately ";
+//                long cacheDurationInMillis = DataManager.transportNetworkCache.timeUnit.toMillis(
+//                        DataManager.transportNetworkCache.duration);
+//                long timeSinceEarliestLoad = DataManager.transportNetworkCache.getTimeSinceEarliestLoad();
+//                if (DataManager.transportNetworkCache.isAtCapacity() &&
+//                        timeSinceEarliestLoad < cacheDurationInMillis) {
+//                    // Only tell the requester that isochrones are unavailable if the cache is at capacity and
+//                    // no cached network has "expired" yet.
+//                    if (networkCacheQueue.containsKey(version.id)) {
+//                        long firstRequestTimestamp = networkCacheQueue.get(version.id);
+//                        long timeSinceFirstRequest = System.currentTimeMillis() - firstRequestTimestamp;
+//                        if (timeSinceFirstRequest > cacheDurationInMillis) {
+//                            // If 10 minutes has passed, remove from queue and pass through to begin loading the version
+//                            // into the cache.
+//                            networkCacheQueue.remove(version.id);
+//                        } else {
+//                            String waitTime = String.join(" ",
+//                                    String.valueOf(((double)cacheDurationInMillis - timeSinceFirstRequest) / 1000 / 60),
+//                                    DataManager.transportNetworkCache.timeUnit.toString());
+//                            halt(202, SparkUtils.formatJSON(waitMessage + waitTime, 202));
+//                        }
+//                    } else {
+//                        // Put feed version in the queue
+//                        String waitTime = String.join(" ",
+//                                String.valueOf(timeSinceEarliestLoad),
+//                                DataManager.transportNetworkCache.timeUnit.toString());
+//                        networkCacheQueue.put(version.id, System.currentTimeMillis());
+//                        halt(202, SparkUtils.formatJSON(waitMessage + waitTime, 202));
+//                    }
+//
+//                }
+
+                // Here we trigger an inputStream read on transport network file to determine if it exists
+                // (i.e., a network has already been built) and throw an exception if not.
+                if (version.getTransportNetworkPath().exists()) {
+                    if (networkBuildInProgress.contains(version.id)) {
+                        // A transport network exists, but it was just built. Remove the version from the
+                        // loads in progress list, and return the network.
+                        try {
+                            // If we get to this point, a network was recently built after an API request.
+                            TransportNetwork tn = DataManager.transportNetworkCache.getTransportNetwork(version.id);
+                            networkBuildInProgress.remove(version.id);
+                            return tn;
+                        } catch (Exception e) {
+                            LOG.error("Could not read transport network.", e);
+                            halt(400, SparkUtils.formatJSON("Could not read transport network."));
+                        }
+                    } else {
+                        // A transport network exists, but has not been read yet. Call read network job or wait for read
+                        // to finish.
+                        if (!networkReadInProgress.contains(version.id)) {
+                            networkReadInProgress.add(version.id);
+                            ReadTransportNetworkJob readTransportNetworkJob =
+                                    new ReadTransportNetworkJob(version, userProfile.getUser_id());
+
+                            DataManager.heavyExecutor.execute(readTransportNetworkJob);
+                        }
+                        // Notify user that read is in progress.
+                        halt(202, SparkUtils.formatJSON("Try again later. Reading transport network", 202));
+                    }
+                } else {
+                    // If transport network has not been built yet (i.e., file does not exist), add to builds in
+                    // progress list, and begin build job.
+                    if (!networkBuildInProgress.contains(version.id)) {
+                        LOG.warn("Transport network not found. Beginning build.");
+                        networkBuildInProgress.add(version.id);
+                        BuildTransportNetworkJob buildTransportNetworkJob =
+                                new BuildTransportNetworkJob(version, userProfile.getUser_id());
+                        ReadTransportNetworkJob readTransportNetworkJob =
+                                new ReadTransportNetworkJob(version, userProfile.getUser_id());
+                        buildTransportNetworkJob.addNextJob(readTransportNetworkJob);
+                        DataManager.heavyExecutor.execute(buildTransportNetworkJob);
+                    }
+                    // Notify user that build is in progress.
+                    halt(202, SparkUtils.formatJSON("Try again later. Building transport network", 202));
                 }
             }
-            halt(202, "Try again later. Reading transport network");
-        }
-        // Catch exception if transport network not built yet
-        catch (Exception e) {
-            if (DataManager.isModuleEnabled("validator") && !readingNetworkVersionList.contains(version.id)) {
-                LOG.warn("Transport network not found. Beginning build.", e);
-                readingNetworkVersionList.add(version.id);
-                BuildTransportNetworkJob btnj = new BuildTransportNetworkJob(version, userProfile.getUser_id());
-                DataManager.heavyExecutor.execute(btnj);
-            }
-            halt(202, "Try again later. Building transport network");
-        }
+        return null;
     }
 
     private static JsonNode getRouterResult(TransportNetwork transportNetwork, AnalystClusterRequest clusterRequest) {
@@ -280,16 +353,17 @@ public class FeedVersionController  {
         targets = transportNetwork.gridPointSet;
         StreetMode mode = StreetMode.WALK;
         final LinkedPointSet linkedTargets = targets.link(transportNetwork.streetLayer, mode);
-        RepeatedRaptorProfileRouter router = new RepeatedRaptorProfileRouter(transportNetwork, clusterRequest, linkedTargets, new TaskStatistics());
+        RepeatedRaptorProfileRouter router =
+                new RepeatedRaptorProfileRouter(transportNetwork, clusterRequest, linkedTargets, new TaskStatistics());
         ResultEnvelope result = router.route();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
-            JsonGenerator jgen = new JsonFactory().createGenerator(out);
-            jgen.writeStartObject();
-            result.avgCase.writeIsochrones(jgen);
-            jgen.writeEndObject();
-            jgen.close();
+            JsonGenerator jsonGenerator = new JsonFactory().createGenerator(out);
+            jsonGenerator.writeStartObject();
+            result.avgCase.writeIsochrones(jsonGenerator);
+            jsonGenerator.writeEndObject();
+            jsonGenerator.close();
             out.close();
             String outString = new String( out.toByteArray(), StandardCharsets.UTF_8 );
             return mapper.readTree(outString);
@@ -305,7 +379,9 @@ public class FeedVersionController  {
         Double fromLon = Double.valueOf(req.queryParams("fromLon"));
         Double toLat = Double.valueOf(req.queryParams("toLat"));
         Double toLon = Double.valueOf(req.queryParams("toLon"));
-        LocalDate date = req.queryParams("date") != null ? LocalDate.parse(req.queryParams("date"), DateTimeFormatter.ISO_LOCAL_DATE) : LocalDate.now(); // 2011-12-03
+        LocalDate date = req.queryParams("date") != null
+                ? LocalDate.parse(req.queryParams("date"), DateTimeFormatter.ISO_LOCAL_DATE)
+                : LocalDate.now(); // 2011-12-03
 
         // optional with defaults
         Integer fromTime = req.queryParams("fromTime") != null ? Integer.valueOf(req.queryParams("fromTime")) : 9 * 3600;
