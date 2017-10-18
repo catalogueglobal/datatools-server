@@ -45,7 +45,10 @@ public class ProcessSingleFeedJob implements Runnable {
             }
         }
 
-        // chain on a network builder job, if applicable
+        // Chain on a network builder job, if applicable
+        // Note: this writes the transport network to disk but garbage collection should take care of cleaning up the
+        // in-memory object. If the network needs to be read (e.g., to generate isochrones) that will happen with the
+        // help of DataManager.transportNetworkCache
         if(DataManager.isModuleEnabled("validator")) {
             validateJob.addNextJob(new BuildTransportNetworkJob(feedVersion, owner));
         }
