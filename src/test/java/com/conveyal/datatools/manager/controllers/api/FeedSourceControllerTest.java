@@ -39,13 +39,13 @@ public class FeedSourceControllerTest extends DatatoolsTest {
     }
 
     /**
-     * Make sure that the essential CRUD operations of the Project Controller work without errors
+     * Make sure that the essential CRUD operations of the Feed Source Controller work without errors
      */
     @Test
     public void canCreateEditAndDeleteAFeedSource() {
         String feedSourceJsonSchema = "com/conveyal/datatools/feed-source-schema.json";
 
-        // can create the project
+        // can create the feed source
         FeedSourceDto feedSourceToCreate = new FeedSourceDto();
         feedSourceToCreate.deployable = false;
         feedSourceToCreate.isPublic = false;
@@ -65,10 +65,10 @@ public class FeedSourceControllerTest extends DatatoolsTest {
 
         assertThat(createdFeedSource.name, equalTo("test-feed-source"));
 
-        // can find the new project in list of all projects
+        // can find the new feed source in list of all feed sources
         assertThat(feedSourceExistsInCollection(createdFeedSource.id), equalTo(true));
 
-        // can find the new project in request for newly created project
+        // can find the new feed source in request for newly created feed source
         given()
             .port(4000)
             .get("/api/manager/secure/feedsource/" + createdFeedSource.id)
@@ -76,7 +76,7 @@ public class FeedSourceControllerTest extends DatatoolsTest {
             .body(matchesJsonSchemaInClasspath(feedSourceJsonSchema))
             .body("id", equalTo(createdFeedSource.id));
 
-        // can change update the created project by changing the name of the project
+        // can change update the created feed source by changing the name of the feed source
         createdFeedSource.name = "changed-name";
         given()
             .port(4000)
@@ -86,14 +86,14 @@ public class FeedSourceControllerTest extends DatatoolsTest {
             .body(matchesJsonSchemaInClasspath(feedSourceJsonSchema))
             .body("name", equalTo(createdFeedSource.name));
 
-        // can delete the updated project
+        // can delete the updated feed source
         given()
             .port(4000)
             .delete("/api/manager/secure/feedsource/" + createdFeedSource.id)
         .then()
             .body(matchesJsonSchemaInClasspath(feedSourceJsonSchema));
 
-        // the project is not found in webservice call for all projects
+        // the feed source is not found in webservice call for all feed sources
         assertThat(feedSourceExistsInCollection(createdFeedSource.id), equalTo(false));
     }
 
