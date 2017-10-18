@@ -65,6 +65,7 @@ public class FeedVersionController  {
             new JsonManager<FeedVersion>(FeedVersion.class, JsonViews.UserInterface.class);
     private static Set<String> networkBuildInProgress = new HashSet<>();
     private static Set<String> networkReadInProgress = new HashSet<>();
+    private static Map<String, Long> networkCacheQueue = new HashMap();
 
     /**
      * Grab this feed version.
@@ -261,6 +262,40 @@ public class FeedVersionController  {
                 }
             } else {
                 // TransportNetwork has not been read before and a cache load has not been triggered.
+                // TODO: add logic that keeps transport networks from being evicted while being used (below code checks load time).
+//                // This check is performed because the loading cache does not evict items even if they have expired.
+//                // This is explained here: https://github.com/google/guava/wiki/CachesExplained#when-does-cleanup-happen
+//                String waitMessage = "Sorry, isochrones for this feed are not available at the moment. Please wait approximately ";
+//                long cacheDurationInMillis = DataManager.transportNetworkCache.timeUnit.toMillis(
+//                        DataManager.transportNetworkCache.duration);
+//                long timeSinceEarliestLoad = DataManager.transportNetworkCache.getTimeSinceEarliestLoad();
+//                if (DataManager.transportNetworkCache.isAtCapacity() &&
+//                        timeSinceEarliestLoad < cacheDurationInMillis) {
+//                    // Only tell the requester that isochrones are unavailable if the cache is at capacity and
+//                    // no cached network has "expired" yet.
+//                    if (networkCacheQueue.containsKey(version.id)) {
+//                        long firstRequestTimestamp = networkCacheQueue.get(version.id);
+//                        long timeSinceFirstRequest = System.currentTimeMillis() - firstRequestTimestamp;
+//                        if (timeSinceFirstRequest > cacheDurationInMillis) {
+//                            // If 10 minutes has passed, remove from queue and pass through to begin loading the version
+//                            // into the cache.
+//                            networkCacheQueue.remove(version.id);
+//                        } else {
+//                            String waitTime = String.join(" ",
+//                                    String.valueOf(((double)cacheDurationInMillis - timeSinceFirstRequest) / 1000 / 60),
+//                                    DataManager.transportNetworkCache.timeUnit.toString());
+//                            halt(202, SparkUtils.formatJSON(waitMessage + waitTime, 202));
+//                        }
+//                    } else {
+//                        // Put feed version in the queue
+//                        String waitTime = String.join(" ",
+//                                String.valueOf(timeSinceEarliestLoad),
+//                                DataManager.transportNetworkCache.timeUnit.toString());
+//                        networkCacheQueue.put(version.id, System.currentTimeMillis());
+//                        halt(202, SparkUtils.formatJSON(waitMessage + waitTime, 202));
+//                    }
+//
+//                }
 
                 // Here we trigger an inputStream read on transport network file to determine if it exists
                 // (i.e., a network has already been built) and throw an exception if not.
