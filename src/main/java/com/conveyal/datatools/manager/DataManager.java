@@ -102,6 +102,10 @@ public class DataManager {
         if (getConfigProperty("application.port") != null) {
             port(Integer.parseInt(getConfigPropertyAsText("application.port")));
         }
+        // Optionally set max http threads
+        if (hasConfigProperty("application.max_http_threads")) {
+            threadPool(Integer.parseInt(getConfigPropertyAsText("application.max_http_threads")));
+        }
         useS3 = "true".equals(getConfigPropertyAsText("application.data.use_s3_storage"));
 
         GTFS_DATA_SOURCE = GTFS.createDataSource(
