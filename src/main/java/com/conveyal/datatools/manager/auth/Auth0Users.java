@@ -14,10 +14,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URLEncoder;
 import java.util.Collection;
 import java.util.HashSet;
 
@@ -27,6 +25,7 @@ import java.util.HashSet;
 public class Auth0Users {
     private static String AUTH0_DOMAIN = DataManager.getConfigPropertyAsText("AUTH0_DOMAIN");
     private static String AUTH0_API_TOKEN = DataManager.getConfigPropertyAsText("AUTH0_TOKEN");
+    private static boolean AUTH_DISABLED = Auth0Connection.authDisabled();
     private static ObjectMapper mapper = new ObjectMapper();
     private static final Logger LOG = LoggerFactory.getLogger(Auth0Users.class);
 
@@ -112,6 +111,10 @@ public class Auth0Users {
     }
 
     public static Auth0UserProfile getUserById(String id) {
+        // if in a development environment, return a mock profile
+        if (AUTH_DISABLED) {
+            return new Auth0UserProfile("mock@example.com", "user_id:string");
+        }
 
         URIBuilder builder = new URIBuilder();
         builder.setScheme("https").setHost(AUTH0_DOMAIN).setPath("/api/v2/users/" + id);

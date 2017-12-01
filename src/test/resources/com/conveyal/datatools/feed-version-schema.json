@@ -1,0 +1,17 @@
+{
+  "type" : "object",
+  "properties" : {
+    "feedSourceId" : {
+      "type" : "string"
+    },
+    "id" : {
+      "type" : "string"
+    },
+    "name" : {
+      "type" : "string"
+    },
+    "version" : {
+      "type" : "integer"
+    }
+  }
+}
