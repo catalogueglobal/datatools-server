@@ -382,34 +382,28 @@ public class Deployment extends Model implements Serializable {
     }
 
     // Get OSM extract
-    public static InputStream getOsmExtract(Rectangle2D bounds) {
+    public static InputStream getOsmExtract(Rectangle2D bounds) throws IOException {
         // call vex server
-        URL vexUrl = null;
+        URL vexUrl;
         try {
             vexUrl = new URL(String.format(Locale.ROOT,"%s/%.6f,%.6f,%.6f,%.6f.pbf",
                     DataManager.getConfigPropertyAsText("OSM_VEX"),
                     bounds.getMinY(), bounds.getMinX(), bounds.getMaxY(), bounds.getMaxX()));
-        } catch (MalformedURLException e1) {
-            e1.printStackTrace();
+        } catch (MalformedURLException e) {
+            LOG.error("Vex server URL is malformed.", e);
+            e.printStackTrace();
+            throw e;
         }
         LOG.info("Getting OSM extract at " + vexUrl.toString());
-        HttpURLConnection conn = null;
+        HttpURLConnection conn;
+        InputStream is;
         try {
             conn = (HttpURLConnection) vexUrl.openConnection();
-        } catch (IOException e1) {
-            e1.printStackTrace();
-        }
-        try {
             conn.connect();
-        } catch (IOException e1) {
-            e1.printStackTrace();
-        }
-
-        InputStream is = null;
-        try {
             is = conn.getInputStream();
-        } catch (IOException e1) {
-            e1.printStackTrace();
+        } catch (IOException e) {
+            LOG.error("Could not connect to vex server.", e);
+            throw e;
         }
         return is;
     }

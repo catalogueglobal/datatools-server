@@ -33,17 +33,19 @@ public class ReadTransportNetworkJob extends MonitorableJob {
 
     @Override
     public void run() {
-        LOG.info("Reading network");
-        File is;
-        is = feedVersion.getTransportNetworkPath();
+        LOG.info("Reading transport network for {}", feedVersion.id);
         try {
-            feedVersion.transportNetwork = TransportNetwork.read(is);
-            // check to see if distance tables are built yet... should be removed once better caching strategy is implemeneted.
-            if (feedVersion.transportNetwork.transitLayer.stopToVertexDistanceTables == null) {
-                feedVersion.transportNetwork.transitLayer.buildDistanceTables(null);
-            }
+            // Trigger a load into the transport network cache. If for some reason, this job is being called and
+            // the transport network has not yet been built, that stage will happen in the getTransportNetwork call.
+            DataManager.transportNetworkCache.getTransportNetwork(feedVersion.id);
         } catch (Exception e) {
             e.printStackTrace();
+            synchronized (status) {
+                status.message = "Unknown error occurred when reading transport network!";
+                status.percentComplete = 100;
+                status.completed = true;
+                status.error = true;
+            }
         }
         synchronized (status) {
             status.message = "Transport network read successfully!";

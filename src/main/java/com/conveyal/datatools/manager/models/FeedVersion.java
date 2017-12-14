@@ -121,9 +121,6 @@ public class FeedVersion extends Model implements Serializable {
     @JsonView(JsonViews.DataDump.class)
     public String feedSourceId;
 
-    @JsonIgnore
-    public transient TransportNetwork transportNetwork;
-
     @JsonView(JsonViews.UserInterface.class)
     public FeedSource getFeedSource() {
         return FeedSource.get(feedSourceId);
@@ -479,15 +476,21 @@ public class FeedVersion extends Model implements Serializable {
         }
 
         File osmExtract = getOSMFile(bounds);
-        if (!osmExtract.exists()) {
-            InputStream is = getOsmExtract(this.validationResult.bounds);
-            OutputStream out;
+        if (!osmExtract.exists() || osmExtract.length() == 0) {
             try {
+                InputStream is = getOsmExtract(this.validationResult.bounds);
+                OutputStream out;
                 out = new FileOutputStream(osmExtract);
                 IOUtils.copy(is, out);
                 is.close();
             } catch (IOException e) {
-                e.printStackTrace();
+                String message = String.format("Unknown error encountered while fetching OSM for %s.", this.id);
+                LOG.warn(message, e);
+                statusMap.put("message", message);
+                statusMap.put("percentComplete", 100.0);
+                statusMap.put("error", true);
+                eventBus.post(statusMap);
+                return null;
             }
         }
 
@@ -502,6 +505,15 @@ public class FeedVersion extends Model implements Serializable {
         TransportNetwork tn;
         try {
             tn = TransportNetwork.fromFeeds(osmExtract.getAbsolutePath(), feedList, TNBuilderConfig.defaultConfig());
+            // FIXME: when there is an issue with OSM (IO) reading or MapDB (Runtime)
+//        } catch (IOException e) {
+//            LOG.error("IOException encountered");
+//            // TODO: delete osm cache
+//            return null;
+        } catch (RuntimeException e) {
+            LOG.error("RuntimeException encountered");
+            // TODO: delete gtfs cache
+            return null;
         } catch (Exception e) {
             String message = String.format("Unknown error encountered while building network for %s.", this.id);
             LOG.warn(message);
@@ -512,15 +524,47 @@ public class FeedVersion extends Model implements Serializable {
             e.printStackTrace();
             return null;
         }
-        this.transportNetwork = tn;
-        this.transportNetwork.transitLayer.buildDistanceTables(null);
+        // Do NOT set this to version.transportNetwork because of memory utilization concerns
+        // TODO: Check that this interpretation of gc is correct.
+//        this.transportNetwork = tn;
+        tn.transitLayer.buildDistanceTables(null);
         File tnFile = getTransportNetworkPath();
         try {
             tn.write(tnFile);
-            return transportNetwork;
+            return tn;
         } catch (IOException e) {
             e.printStackTrace();
         }
+        return null;
+    }
+
+    public TransportNetwork buildOrReadTransportNetwork () {
+        LOG.info("Building or reading transport network for {}", id);
+//        if (transportNetwork != null) {
+//            return transportNetwork;
+//        } else {
+            // First, try reading the transportNetwork
+            File transportNetworkFile = getTransportNetworkPath();
+            try {
+                TransportNetwork readTransportNetwork = TransportNetwork.read(transportNetworkFile);
+                // check to see if distance tables are built yet... should be removed once better caching strategy
+                // is implemented.
+                if (readTransportNetwork.transitLayer.stopToVertexDistanceTables == null) {
+                    readTransportNetwork.transitLayer.buildDistanceTables(null);
+                }
+                return readTransportNetwork;
+            }
+            // Catch exception if transport network not built yet.
+            catch (Exception e) {
+                // If read fails (e.g., because the file does not exist), build it instead.
+                e.printStackTrace();
+                if (DataManager.isModuleEnabled("validator")) {
+                    LOG.warn("Transport network not found. Beginning build.", e);
+                    return buildTransportNetwork();
+                }
+            }
+//        }
+        LOG.error("Could not build transport network for {}", id);
         return null;
     }
 

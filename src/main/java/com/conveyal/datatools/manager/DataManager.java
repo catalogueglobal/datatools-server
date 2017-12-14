@@ -15,6 +15,7 @@ import com.conveyal.datatools.manager.extensions.transitland.TransitLandFeedReso
 import com.conveyal.datatools.common.status.MonitorableJob;
 import com.conveyal.datatools.manager.models.Project;
 import com.conveyal.datatools.manager.persistence.FeedStore;
+import com.conveyal.datatools.manager.persistence.TransportNetworkCache;
 import com.conveyal.datatools.manager.utils.CorsFilter;
 import com.conveyal.gtfs.api.ApiMain;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -44,7 +45,7 @@ import static spark.Spark.*;
 
 public class DataManager {
 
-    public static final Logger LOG = LoggerFactory.getLogger(DataManager.class);
+    private static final Logger LOG = LoggerFactory.getLogger(DataManager.class);
 
     public static JsonNode config;
     public static JsonNode serverConfig;
@@ -61,6 +62,7 @@ public class DataManager {
     public final static ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private static final ObjectMapper yamlMapper = new ObjectMapper(new YAMLFactory());
 
+    public static final TransportNetworkCache transportNetworkCache = new TransportNetworkCache();
 
     // heavy executor should contain long-lived CPU-intensive tasks (e.g., feed loading/validation)
     public static Executor heavyExecutor = Executors.newFixedThreadPool(4); // Runtime.getRuntime().availableProcessors()
