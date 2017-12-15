@@ -89,9 +89,6 @@ public class DataManager {
         // load config
         loadConfig(args);
 
-        // FIXME: hack to statically load FeedStore
-        LOG.info(FeedStore.class.getSimpleName());
-
         // Optionally set port for server. Otherwise, Spark defaults to 4000.
         if (getConfigProperty("application.port") != null) {
             port(Integer.parseInt(getConfigPropertyAsText("application.port")));
