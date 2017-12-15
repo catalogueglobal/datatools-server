@@ -1,5 +1,11 @@
 package com.conveyal.datatools.manager;
 
+import com.amazonaws.SdkClientException;
+import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import com.conveyal.datatools.common.utils.SparkUtils;
 import com.conveyal.datatools.manager.auth.Auth0Connection;
 
