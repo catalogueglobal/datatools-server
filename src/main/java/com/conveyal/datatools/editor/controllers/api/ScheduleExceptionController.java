@@ -181,7 +181,9 @@ public class ScheduleExceptionController {
         if (ex.dates != null) {
             for (LocalDate date : ex.dates) {
                 // This is inefficient, but it keeps us from using the scheduleExceptionCountByDate map
-                // which had significant issues with mapdb corruption for some reason.
+                // which had significant issues with mapdb corruption likely due to the use of BindUtils.multiHistogram
+                // which we believe is making an auto-updated view or triggers or something. It's likely that there's some
+                // bug in combining these views with transactions.
                 for (ScheduleException exception : exceptions) {
                     if (exception.dates.contains(date)) {
                         halt(400);
