@@ -67,7 +67,7 @@ public class SnapshotTx extends DatabaseTx {
         try {
             targetTx.getAll();
         } catch (RuntimeException e) {
-            LOG.error("Target FeedTX for feed restore may be corrupted.  Wiping feed database (it will be restored with a snapshot anyways).", e);
+            LOG.error("Target FeedTX for feed restore may be corrupted.  Deleting feed DB files (db will be restored with a snapshot anyways).", e);
             // This deletes the mapdb files entirely and is only used here because we are replacing with a new snapshot.
             VersionedDataStore.wipeFeedDB(agencyId);
             // Get fresh database transaction
