@@ -176,6 +176,7 @@ public class ScheduleExceptionController {
         return null;
     }
 
+    /** Check that no dates for the schedule exception are repeated across all schedule exceptions for the feed. */
     private static void checkDuplicateDates(ScheduleException ex, Collection<ScheduleException> exceptions) {
         if (ex.dates != null) {
             for (LocalDate date : ex.dates) {
