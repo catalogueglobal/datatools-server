@@ -324,16 +324,6 @@ public class FeedSource extends Model implements Cloneable {
         return resourceTable;
     }
 
-    public static FeedSource retrieve(String id) {
-//        return sourceStore.getById(id);
-        return null;
-    }
-
-    public static Collection<FeedSource> retrieveAll() {
-//        return sourceStore.getAll();
-        return null;
-    }
-
     /**
      * Get all of the feed versions for this source
      * @return collection of feed versions
