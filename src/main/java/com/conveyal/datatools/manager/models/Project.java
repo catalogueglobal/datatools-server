@@ -4,7 +4,6 @@ import com.conveyal.datatools.manager.persistence.Persistence;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -30,12 +29,14 @@ public class Project extends Model {
 
     public boolean useCustomOsmBounds;
 
-    public OtpBuildConfig buildConfig;
 
+    public OtpBuildConfig buildConfig;
     public OtpRouterConfig routerConfig;
 
+    /** The OTP servers configured for deployments. */
     public Collection<OtpServer> otpServers;
 
+    /** The organization that owns this project. */
     public String organizationId;
 
     public OtpServer retrieveServer(String name) {
@@ -92,10 +93,8 @@ public class Project extends Model {
 
     // TODO: Does this need to be returned with JSON API response
     public Organization retrieveOrganization() {
-        if (organizationId != null) {
-            return Persistence.organizations.getById(organizationId);
-        } else {
-            return null;
-        }
+        return (organizationId != null)
+                ? Persistence.organizations.getById(organizationId)
+                : null;
     }
 }
