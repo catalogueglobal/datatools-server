@@ -90,8 +90,9 @@ public class MakePublicJob extends MonitorableJob {
             e.printStackTrace();
         }
 
-        FeedStore.s3Client.putObject(DataManager.feedBucket, folder + fileName, file);
-        FeedStore.s3Client.setObjectAcl(DataManager.feedBucket, folder + fileName, CannedAccessControlList.PublicRead);
+        // Update index.html file on S3
+        DataManager.s3Client.putObject(DataManager.feedBucket, folder + fileName, file);
+        DataManager.s3Client.setObjectAcl(DataManager.feedBucket, folder + fileName, CannedAccessControlList.PublicRead);
 
         LOG.info("Public page updated on s3");
     }

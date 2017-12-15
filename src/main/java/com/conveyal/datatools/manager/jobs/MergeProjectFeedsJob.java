@@ -7,7 +7,6 @@ import com.conveyal.datatools.manager.DataManager;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.Project;
-import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import org.slf4j.Logger;
@@ -16,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -50,24 +48,21 @@ public class MergeProjectFeedsJob extends MonitorableJob {
         status.message = "Merging feeds...";
     }
 
+    /**
+     * Merge a project's latest feed versions into a single GTFS file.
+     */
     @Override
     public void jobLogic () {
         // get feed sources in project
         Collection<FeedSource> feeds = project.retrieveProjectFeedSources();
 
-        // create temp merged zip file to add feed content to
-        File mergedFile = null;
-        try {
-            mergedFile = File.createTempFile(project.id + "-merged", ".zip");
-            mergedFile.deleteOnExit();
+        // Create merged zip file to add feed content to
+        File mergedFile = DataManager.projectStore.getFileForId(project.id);
+        // We don't need to keep project feeds when application shuts down. We'll just overwrite the file with a
+        // newly generated one.
+        mergedFile.deleteOnExit();
 
-        } catch (IOException e) {
-            LOG.error("Could not create temp file");
-            e.printStackTrace();
-            halt(400, SparkUtils.formatJSON("Unknown error while merging feeds.", 400));
-        }
-
-        // create the zipfile
+        // Create the zipfile output stream
         ZipOutputStream out;
         try {
             out = new ZipOutputStream(new FileOutputStream(mergedFile));
@@ -82,7 +77,7 @@ public class MergeProjectFeedsJob extends MonitorableJob {
 
         // collect zipFiles for each feedSource before merging tables
         for (FeedSource fs : feeds) {
-            // check if feed source has version (use latest)
+            // Check if feed source has version (use latest)
             FeedVersion version = fs.retrieveLatest();
             if (version == null) {
                 LOG.info("Skipping {} because it has no feed versions", fs.name);
@@ -108,16 +103,15 @@ public class MergeProjectFeedsJob extends MonitorableJob {
         int numberOfTables = DataManager.gtfsConfig.size();
         for(int i = 0; i < numberOfTables; i++) {
             JsonNode tableNode = DataManager.gtfsConfig.get(i);
-            byte[] tableOut = mergeTables(tableNode, feedSourceMap);
+            byte[] tableOut = MergeProjectFeedsJob.mergeTables(tableNode, feedSourceMap);
 
             // if at least one feed has the table, include it
             if (tableOut != null) {
 
                 String tableName = tableNode.get("name").asText();
-                synchronized (status) {
-                    status.message = "Merging " + tableName;
-                    status.percentComplete = Math.round((double) i / numberOfTables * 10000d) / 100d;
-                }
+                double percentComplete = Math.round((double) i / numberOfTables * 10000d) / 100d;
+                status.update(false, "Merging " + tableName, percentComplete);
+
                 // create entry for zip file
                 ZipEntry tableEntry = new ZipEntry(tableName);
                 try {
@@ -137,31 +131,13 @@ public class MergeProjectFeedsJob extends MonitorableJob {
             LOG.error("Error closing zip file");
             e.printStackTrace();
         }
-        synchronized (status) {
-            status.message = "Saving merged feed.";
-            status.percentComplete = 95.0;
-        }
+        status.update(false, "Saving merged feed.", 95.0);
+
         // Store the project merged zip locally or on s3
         if (DataManager.useS3) {
-            String s3Key = "project/" + project.id + ".zip";
-            FeedStore.s3Client.putObject(DataManager.feedBucket, s3Key, mergedFile);
-            LOG.info("Storing merged project feed at s3://{}/{}", DataManager.feedBucket, s3Key);
-        } else {
-            try {
-                FeedVersion.feedStore.newFeed(project.id + ".zip", new FileInputStream(mergedFile), null);
-            } catch (FileNotFoundException e) {
-                e.printStackTrace();
-                LOG.error("Could not store feed for project {}", project.id);
-            }
+            DataManager.projectStore.uploadToS3(mergedFile, project.id + ".zip", true);
         }
-        // delete temp file
-        mergedFile.delete();
-
-        synchronized (status) {
-            status.message = "Merged feed created successfully.";
-            status.completed = true;
-            status.percentComplete = 100.0;
-        }
+        status.update(false, "Merged feed created successfully.", 100,true);
     }
 
     /**
@@ -170,7 +146,7 @@ public class MergeProjectFeedsJob extends MonitorableJob {
      * @param feedSourceMap map of feedSources to zipFiles from which to extract the .txt tables
      * @return single merged table for feeds
      */
-    private static byte[] mergeTables(JsonNode tableNode, Map<FeedSource, ZipFile> feedSourceMap) {
+    public static byte[] mergeTables(JsonNode tableNode, Map<FeedSource, ZipFile> feedSourceMap) {
 
         String tableName = tableNode.get("name").asText();
         ByteArrayOutputStream tableOut = new ByteArrayOutputStream();

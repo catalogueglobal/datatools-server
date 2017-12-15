@@ -9,18 +9,15 @@ import com.conveyal.datatools.manager.jobs.FetchProjectFeedsJob;
 import com.conveyal.datatools.manager.jobs.MakePublicJob;
 import com.conveyal.datatools.manager.jobs.MergeProjectFeedsJob;
 import com.conveyal.datatools.manager.models.FeedDownloadToken;
-import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.JsonViews;
 import com.conveyal.datatools.manager.models.Project;
 import com.conveyal.datatools.manager.persistence.Persistence;
 import com.conveyal.datatools.manager.utils.json.JsonManager;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -132,8 +129,8 @@ public class ProjectController {
             }
             return updatedProject;
         } catch (Exception e) {
-            e.printStackTrace();
-            halt(400, SparkUtils.formatJSON("Error updating project"));
+            LOG.error("Error updating project", e);
+            haltWithError(400, "Error updating project");
             return null;
         }
     }
@@ -146,7 +143,7 @@ public class ProjectController {
         Project project = requestProjectById(req, "manage");
         boolean successfullyDeleted = Persistence.projects.removeById(req.params("id"));
         if (!successfullyDeleted) {
-            halt(400, SparkUtils.formatJSON("Did not delete project."));
+            haltWithError(400, "Did not delete project.");
         }
         return project;
     }
@@ -257,7 +254,7 @@ public class ProjectController {
 
         // if storing feeds on s3, return temporary s3 credentials for that zip file
         if (DataManager.useS3) {
-            return getS3Credentials(DataManager.awsRole, DataManager.feedBucket, "project/" + project.id + ".zip", Statement.Effect.Allow, S3Actions.GetObject, 900);
+            return DataManager.projectStore.getFeedDownloadCredentials(project.id + ".zip");
         } else {
             // when feeds are stored locally, single-use download token will still be used
             FeedDownloadToken token = new FeedDownloadToken(project);
@@ -408,7 +405,7 @@ public class ProjectController {
 
         Persistence.tokens.removeById(token.id);
         String fileName = project.id + ".zip";
-        return downloadFile(FeedVersion.feedStore.getFeed(fileName), fileName, res);
+        return downloadFile(DataManager.projectStore.getFeed(fileName), fileName, res);
     }
 
 }

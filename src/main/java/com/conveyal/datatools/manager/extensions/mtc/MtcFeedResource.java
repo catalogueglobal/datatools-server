@@ -1,6 +1,6 @@
 package com.conveyal.datatools.manager.extensions.mtc;
 
-import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.AmazonS3;
 import com.conveyal.datatools.manager.DataManager;
 import com.conveyal.datatools.manager.extensions.ExternalFeedResource;
 import com.conveyal.datatools.manager.models.ExternalFeedSourceProperty;
@@ -30,14 +30,14 @@ import static com.conveyal.datatools.manager.models.ExternalFeedSourceProperty.c
 public class MtcFeedResource implements ExternalFeedResource {
 
     public static final Logger LOG = LoggerFactory.getLogger(MtcFeedResource.class);
+    public final FeedStore feedStore;
+    private final String rtdApi, s3Bucket, s3Prefix;
 
-    private String rtdApi, s3Bucket, s3Prefix, s3CredentialsFilename;
-
-    public MtcFeedResource() {
+    public MtcFeedResource(AmazonS3 s3Client, String awsRole) {
         rtdApi = DataManager.getConfigPropertyAsText("extensions.mtc.rtd_api");
         s3Bucket = DataManager.getConfigPropertyAsText("extensions.mtc.s3_bucket");
         s3Prefix = DataManager.getConfigPropertyAsText("extensions.mtc.s3_prefix");
-        //s3CredentialsFilename = DataManager.config.retrieveById("extensions").retrieveById("mtc").retrieveById("s3_credentials_file").asText();
+        feedStore = new FeedStore(DataManager.storageDirectory, null, s3Prefix, s3Bucket, s3Client, awsRole);
     }
 
     @Override
@@ -204,13 +204,11 @@ public class MtcFeedResource implements ExternalFeedResource {
             return;
         }
 
-        String keyName = this.s3Prefix + agencyIdProp.value + ".zip";
-        LOG.info("Pushing to MTC S3 Bucket: " + keyName);
-
+        String fileName = agencyIdProp.value + ".zip";
+        LOG.info("Pushing to MTC S3 Bucket: " + fileName);
         File file = feedVersion.retrieveGtfsFile();
 
-        FeedStore.s3Client.putObject(new PutObjectRequest(
-                s3Bucket, keyName, file));
+        feedStore.uploadToS3(file, fileName, true);
     }
 
     private void writeCarrierToRtd(RtdCarrier carrier, boolean createNew, String authHeader) {

@@ -1,7 +1,5 @@
 package com.conveyal.datatools.manager.controllers.api;
 
-import com.amazonaws.auth.policy.Statement;
-import com.amazonaws.auth.policy.actions.S3Actions;
 import com.conveyal.datatools.common.utils.SparkUtils;
 import com.conveyal.datatools.manager.DataManager;
 import com.conveyal.datatools.manager.auth.Auth0UserProfile;
@@ -13,9 +11,7 @@ import com.conveyal.datatools.manager.models.FeedDownloadToken;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.JsonViews;
-import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.conveyal.datatools.manager.persistence.Persistence;
-import com.conveyal.datatools.manager.utils.HashUtils;
 import com.conveyal.datatools.manager.utils.json.JsonManager;
 import com.conveyal.r5.analyst.PointSet;
 import com.conveyal.r5.analyst.cluster.AnalystClusterRequest;
@@ -47,14 +43,12 @@ import org.slf4j.LoggerFactory;
 import spark.Request;
 import spark.Response;
 
-import javax.servlet.MultipartConfigElement;
 import javax.servlet.ServletException;
 import javax.servlet.ServletInputStream;
 import javax.servlet.ServletRequestWrapper;
-import javax.servlet.http.Part;
 
-import static com.conveyal.datatools.common.utils.S3Utils.getS3Credentials;
 import static com.conveyal.datatools.common.utils.SparkUtils.downloadFile;
+import static com.conveyal.datatools.common.utils.SparkUtils.formatJobMessage;
 import static com.conveyal.datatools.common.utils.SparkUtils.haltWithError;
 import static com.conveyal.datatools.manager.controllers.api.FeedSourceController.checkFeedSourcePermissions;
 import static spark.Spark.*;
@@ -116,36 +110,21 @@ public class FeedVersionController  {
         FeedSource feedSource = requestFeedSourceById(req, "manage");
         FeedVersion latestVersion = feedSource.retrieveLatest();
         FeedVersion newFeedVersion = new FeedVersion(feedSource);
-        newFeedVersion.retrievalMethod = FeedSource.FeedRetrievalMethod.MANUALLY_UPLOADED;
 
 
         // FIXME: Make the creation of new GTFS files generic to handle other feed creation methods, including fetching
         // by URL and loading from the editor.
-        File newGtfsFile = new File(DataManager.getConfigPropertyAsText("application.data.gtfs"), newFeedVersion.id);
-        try {
-            // Bypass Spark's request wrapper which always caches the request body in memory that may be a very large
-            // GTFS file. Also, the body of the request is the GTFS file instead of using multipart form data because
-            // multipart form handling code also caches the request body.
-            ServletInputStream inputStream = ((ServletRequestWrapper) req.raw()).getRequest().getInputStream();
-            FileOutputStream fileOutputStream = new FileOutputStream(newGtfsFile);
-            // Guava's ByteStreams.copy uses a 4k buffer (no need to wrap output stream), but does not close streams.
-            ByteStreams.copy(inputStream, fileOutputStream);
-            fileOutputStream.close();
-            inputStream.close();
-            // Set last modified based on value of query param. This is determined/supplied by the client
-            // request because this data gets lost in the uploadStream otherwise.
-            Long lastModified = req.queryParams("lastModified") != null ? Long.valueOf(req.queryParams("lastModified")) : null;
-            if (lastModified != null) newGtfsFile.setLastModified(lastModified);
-            LOG.info("Last modified: {}", new Date(newGtfsFile.lastModified()));
-            LOG.info("Saving feed from upload {}", feedSource);
-        } catch (Exception e) {
-            LOG.error("Unable to open input stream from uploaded file", e);
-            haltWithError(400, "Unable to read uploaded feed");
-        }
+        File newGtfsFile = DataManager.feedStore.getFileForId(newFeedVersion.id);
+        writeUploadedFileFromRequest(req, newGtfsFile);
+        // Set last modified based on value of query param. This is determined/supplied by the client
+        // request because this data gets lost in the uploadStream otherwise.
+        Long lastModified = req.queryParams("lastModified") != null ? Long.valueOf(req.queryParams("lastModified")) : null;
+        if (lastModified != null) newGtfsFile.setLastModified(lastModified);
+        LOG.info("Last modified: {}", new Date(newGtfsFile.lastModified()));
+        LOG.info("Saving feed from upload {}", feedSource);
 
-        // TODO: fix FeedVersion.hash() call when called in this context. Nothing gets hashed because the file has not been saved yet.
-        // newFeedVersion.hash();
-        newFeedVersion.hash = HashUtils.hashFile(newGtfsFile);
+        // Set feedVersion properties
+        newFeedVersion.updateFields(newFeedVersion.formattedTimestamp() + " Upload", newGtfsFile, FeedSource.FeedRetrievalMethod.MANUALLY_UPLOADED);
 
         // Check that the hashes of the feeds don't match, i.e. that the feed has changed since the last version.
         // (as long as there is a latest version, i.e. the feed source is not completely new)
@@ -159,14 +138,35 @@ public class FeedVersionController  {
             haltWithError(304, "Uploaded feed is identical to the latest version known to the database.");
         }
 
-        newFeedVersion.setName(newFeedVersion.formattedTimestamp() + " Upload");
         // TODO newFeedVersion.fileTimestamp still exists
 
         // Must be handled by executor because it takes a long time.
         ProcessSingleFeedJob processSingleFeedJob = new ProcessSingleFeedJob(newFeedVersion, userProfile.getUser_id());
         DataManager.heavyExecutor.execute(processSingleFeedJob);
 
-        return processSingleFeedJob.jobId;
+        // Return the jobId so that the requester can track the job's progress.
+        return formatJobMessage(processSingleFeedJob.jobId, "Processing feed version upload.");
+    }
+
+    /**
+     * Convenience method to write an uploaded file from a Spark request (file is directly placed in request body rather
+     * than using multipart form data) to disk at the file path specified.
+     * @throws IOException
+     */
+    public static void writeUploadedFileFromRequest(Request req, File newFile) {
+        // Bypass Spark's request wrapper which always caches the request body in memory that may be a very large
+        // GTFS file. Also, the body of the request is the GTFS file instead of using multipart form data because
+        // multipart form handling code also caches the request body.
+        try (
+            ServletInputStream inputStream = ((ServletRequestWrapper) req.raw()).getRequest().getInputStream();
+            FileOutputStream fileOutputStream = new FileOutputStream(newFile)
+        ) {
+            // Guava's ByteStreams.copy uses a 4k buffer (no need to wrap output stream)
+            ByteStreams.copy(inputStream, fileOutputStream);
+        } catch (Exception e) {
+            LOG.error("Unable to open input stream from uploaded file", e);
+            haltWithError(400, "Unable to read uploaded feed");
+        }
     }
 
     public static boolean createFeedVersionFromSnapshot (Request req, Response res) throws IOException, ServletException {
@@ -347,7 +347,7 @@ public class FeedVersionController  {
 
         // if storing feeds on s3, return temporary s3 credentials for that zip file
         if (DataManager.useS3) {
-            return getS3Credentials(DataManager.awsRole, DataManager.feedBucket, FeedStore.s3Prefix + version.id, Statement.Effect.Allow, S3Actions.GetObject, 900);
+            return DataManager.feedStore.getFeedDownloadCredentials(version.id);
         } else {
             // when feeds are stored locally, single-use download token will still be used
             FeedDownloadToken token = new FeedDownloadToken(version);

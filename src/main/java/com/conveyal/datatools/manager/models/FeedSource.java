@@ -8,21 +8,23 @@ import com.conveyal.datatools.editor.datastore.GlobalTx;
 import com.conveyal.datatools.editor.datastore.VersionedDataStore;
 import com.conveyal.datatools.manager.DataManager;
 import com.conveyal.datatools.manager.jobs.NotifyUsersForSubscriptionJob;
-import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.conveyal.datatools.manager.persistence.Persistence;
-import com.conveyal.datatools.manager.utils.HashUtils;
 import com.conveyal.gtfs.validator.ValidationResult;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonView;
+import com.google.common.io.ByteStreams;
 import com.mongodb.client.model.Sorts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Collection;
@@ -32,7 +34,6 @@ import java.util.Map;
 
 import static com.conveyal.datatools.manager.utils.StringUtils.getCleanName;
 import static com.mongodb.client.model.Filters.eq;
-import static com.mongodb.client.model.Updates.set;
 
 /**
  * Created by demory on 3/22/16.
@@ -146,7 +147,6 @@ public class FeedSource extends Model implements Cloneable {
         // fetch occurs. That way, in the highly unlikely event that a feed is updated while we're
         // fetching it, we will not miss a new feed.
         FeedVersion version = new FeedVersion(this);
-        version.retrievalMethod = FeedRetrievalMethod.FETCHED_AUTOMATICALLY;
 
         // build the URL from which to fetch
         URL url = this.url;
@@ -187,7 +187,13 @@ public class FeedSource extends Model implements Cloneable {
                     message = String.format("Saving %s feed.", this.name);
                     LOG.info(message);
                     status.update(false, message, 75.0);
-                    newGtfsFile = version.newGtfsFile(conn.getInputStream());
+                    // Get new file for version and write input stream to file.
+                    newGtfsFile = DataManager.feedStore.getFileForId(version.id);
+                    InputStream inputStream = conn.getInputStream();
+                    OutputStream fileOutputStream = new FileOutputStream(newGtfsFile);
+                    ByteStreams.copy(inputStream, fileOutputStream);
+                    inputStream.close();
+                    fileOutputStream.close();
                     break;
                 default:
                     message = String.format("HTTP status (%d: %s) retrieving %s feed", conn.getResponseCode(), conn.getResponseMessage(), this.name);
@@ -203,10 +209,9 @@ public class FeedSource extends Model implements Cloneable {
             return null;
         }
 
-        // note that anything other than a new feed fetched successfully will have already returned from the function
-//        version.hash();
-        version.hash = HashUtils.hashFile(newGtfsFile);
-
+        // Any fetch failures will have already returned from the function, so we can continue assured that the fetch
+        // was successful.
+        version.updateFields(null, newGtfsFile, FeedRetrievalMethod.FETCHED_AUTOMATICALLY);
 
         if (latest != null && version.hash.equals(latest.hash)) {
             // If new version hash equals the hash for the latest version, do not error. Simply indicate that server
@@ -271,7 +276,7 @@ public class FeedSource extends Model implements Cloneable {
      * so Jackson doesn't work. So instead we specifically expose the validation results and the latest update.
      * @return
      */
-    // TODO: use summarized feed source here. requires serious refactoring on client side.
+    // FIXME: use summarized feed source here. requires serious refactoring on client side.
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonView(JsonViews.UserInterface.class)
     @JsonProperty("lastUpdated")
@@ -350,52 +355,52 @@ public class FeedSource extends Model implements Cloneable {
     }
 
     public void makePublic() {
-        String sourceKey = FeedStore.s3Prefix + this.id + ".zip";
+        String sourceKey = DataManager.GTFS_S3_PREFIX + this.id + ".zip";
         String publicKey = toPublicKey();
         String versionId = this.latestVersionId();
-        String latestVersionKey = FeedStore.s3Prefix + versionId;
+        String latestVersionKey = DataManager.GTFS_S3_PREFIX + versionId;
 
         // only deploy to public if storing feeds on s3 (no mechanism for downloading/publishing
         // them otherwise)
         if (DataManager.useS3) {
-            boolean sourceExists = FeedStore.s3Client.doesObjectExist(DataManager.feedBucket, sourceKey);
+            boolean sourceExists = DataManager.s3Client.doesObjectExist(DataManager.feedBucket, sourceKey);
             ObjectMetadata sourceMetadata = sourceExists
-                    ? FeedStore.s3Client.getObjectMetadata(DataManager.feedBucket, sourceKey)
+                    ? DataManager.s3Client.getObjectMetadata(DataManager.feedBucket, sourceKey)
                     : null;
-            boolean latestExists = FeedStore.s3Client.doesObjectExist(DataManager.feedBucket, latestVersionKey);
+            boolean latestExists = DataManager.s3Client.doesObjectExist(DataManager.feedBucket, latestVersionKey);
             ObjectMetadata latestVersionMetadata = latestExists
-                    ? FeedStore.s3Client.getObjectMetadata(DataManager.feedBucket, latestVersionKey)
+                    ? DataManager.s3Client.getObjectMetadata(DataManager.feedBucket, latestVersionKey)
                     : null;
             boolean latestVersionMatchesSource = sourceMetadata != null &&
                     latestVersionMetadata != null &&
                     sourceMetadata.getETag().equals(latestVersionMetadata.getETag());
             if (sourceExists && latestVersionMatchesSource) {
                 LOG.info("copying feed {} to s3 public folder", this);
-                FeedStore.s3Client.setObjectAcl(DataManager.feedBucket, sourceKey, CannedAccessControlList.PublicRead);
-                FeedStore.s3Client.copyObject(DataManager.feedBucket, sourceKey, DataManager.feedBucket, publicKey);
-                FeedStore.s3Client.setObjectAcl(DataManager.feedBucket, publicKey, CannedAccessControlList.PublicRead);
+                DataManager.s3Client.setObjectAcl(DataManager.feedBucket, sourceKey, CannedAccessControlList.PublicRead);
+                DataManager.s3Client.copyObject(DataManager.feedBucket, sourceKey, DataManager.feedBucket, publicKey);
+                DataManager.s3Client.setObjectAcl(DataManager.feedBucket, publicKey, CannedAccessControlList.PublicRead);
             } else {
                 LOG.warn("Latest feed source {} on s3 at {} does not exist or does not match latest version. Using latest version instead.", this, sourceKey);
-                if (FeedStore.s3Client.doesObjectExist(DataManager.feedBucket, latestVersionKey)) {
+                if (DataManager.s3Client.doesObjectExist(DataManager.feedBucket, latestVersionKey)) {
                     LOG.info("copying feed version {} to s3 public folder", versionId);
-                    FeedStore.s3Client.setObjectAcl(DataManager.feedBucket, latestVersionKey, CannedAccessControlList.PublicRead);
-                    FeedStore.s3Client.copyObject(DataManager.feedBucket, latestVersionKey, DataManager.feedBucket, publicKey);
-                    FeedStore.s3Client.setObjectAcl(DataManager.feedBucket, publicKey, CannedAccessControlList.PublicRead);
+                    DataManager.s3Client.setObjectAcl(DataManager.feedBucket, latestVersionKey, CannedAccessControlList.PublicRead);
+                    DataManager.s3Client.copyObject(DataManager.feedBucket, latestVersionKey, DataManager.feedBucket, publicKey);
+                    DataManager.s3Client.setObjectAcl(DataManager.feedBucket, publicKey, CannedAccessControlList.PublicRead);
 
                     // also copy latest version to feedStore latest
-                    FeedStore.s3Client.copyObject(DataManager.feedBucket, latestVersionKey, DataManager.feedBucket, sourceKey);
+                    DataManager.s3Client.copyObject(DataManager.feedBucket, latestVersionKey, DataManager.feedBucket, sourceKey);
                 }
             }
         }
     }
 
     public void makePrivate() {
-        String sourceKey = FeedStore.s3Prefix + this.id + ".zip";
+        String sourceKey = DataManager.GTFS_S3_PREFIX + this.id + ".zip";
         String publicKey = toPublicKey();
-        if (FeedStore.s3Client.doesObjectExist(DataManager.feedBucket, sourceKey)) {
+        if (DataManager.s3Client.doesObjectExist(DataManager.feedBucket, sourceKey)) {
             LOG.info("removing feed {} from s3 public folder", this);
-            FeedStore.s3Client.setObjectAcl(DataManager.feedBucket, sourceKey, CannedAccessControlList.AuthenticatedRead);
-            FeedStore.s3Client.deleteObject(DataManager.feedBucket, publicKey);
+            DataManager.s3Client.setObjectAcl(DataManager.feedBucket, sourceKey, CannedAccessControlList.AuthenticatedRead);
+            DataManager.s3Client.deleteObject(DataManager.feedBucket, publicKey);
         }
     }
 
@@ -428,8 +433,8 @@ public class FeedSource extends Model implements Cloneable {
         // delete latest copy of feed source
         if (DataManager.useS3) {
             DeleteObjectsRequest delete = new DeleteObjectsRequest(DataManager.feedBucket);
-            delete.withKeys("public/" + this.name + ".zip", FeedStore.s3Prefix + this.id + ".zip");
-            FeedStore.s3Client.deleteObjects(delete);
+            delete.withKeys("public/" + this.name + ".zip", DataManager.GTFS_S3_PREFIX + this.id + ".zip");
+            DataManager.s3Client.deleteObjects(delete);
         }
 
         // Delete editor feed mapdb

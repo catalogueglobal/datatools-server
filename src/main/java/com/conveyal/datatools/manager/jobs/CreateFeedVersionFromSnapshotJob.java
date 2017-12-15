@@ -4,12 +4,10 @@ import com.conveyal.datatools.common.status.MonitorableJob;
 import com.conveyal.datatools.editor.models.Snapshot;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
-import com.conveyal.datatools.manager.utils.HashUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.io.FileInputStream;
 
 import static com.conveyal.datatools.editor.models.Snapshot.writeSnapshotAsGtfs;
 
@@ -48,19 +46,19 @@ public class CreateFeedVersionFromSnapshotJob extends MonitorableJob {
         }
 
         try {
-            feedVersion.newGtfsFile(new FileInputStream(file));
+            Snapshot snapshot = Snapshot.get(snapshotId);
+            if (snapshot == null) {
+                throw new IllegalArgumentException("Snapshot ID " + snapshotId + " does not exist");
+            }
+            feedVersion.updateFields(snapshot.name + " Snapshot Export", file, FeedSource.FeedRetrievalMethod.PRODUCED_IN_HOUSE);
         } catch (Exception e) {
             String message = "Unable to open input stream from upload";
             LOG.error(message);
             status.update(true, message, 100, true);
         }
-
-        feedVersion.retrievalMethod = FeedSource.FeedRetrievalMethod.PRODUCED_IN_HOUSE;
-        feedVersion.setName(Snapshot.get(snapshotId).name + " Snapshot Export");
-        feedVersion.hash = HashUtils.hashFile(feedVersion.retrieveGtfsFile());
-
         status.update(false, "Version created successfully.", 100, true);
 
-        // ProcessSingleFeedJob will now be executed, the final step of which is storing the FeedVersion in MongoDB.
+        // ProcessSingleFeedJob will now be executed. Storing the FeedVersion in MongoDB will happen at the completion
+        // of the Load/Validate tasks.
     }
 }

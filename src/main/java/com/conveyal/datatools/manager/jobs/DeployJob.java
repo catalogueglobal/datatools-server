@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.conveyal.datatools.common.status.MonitorableJob;
+import com.conveyal.datatools.manager.DataManager;
 import com.conveyal.datatools.manager.models.Deployment;
 import com.conveyal.datatools.manager.persistence.FeedStore;
 import org.slf4j.Logger;
@@ -56,6 +57,14 @@ public class DeployJob extends MonitorableJob {
 
     /** This hides the status field on the parent class, providing additional fields. */
     public DeployStatus status;
+
+    /**
+     * JSON getter for deployment ID in the API response.
+     */
+    @JsonProperty
+    public String getDeploymentId () {
+        return deployment.id;
+    }
 
     public DeployJob(Deployment deployment, String owner, List<String> targets, String publicUrl, String s3Bucket, String s3CredentialsFilename) {
         // TODO add new job type or get rid of enum in favor of just using class names
@@ -115,7 +124,7 @@ public class DeployJob extends MonitorableJob {
             LOG.info("Uploading deployment {} to s3", deployment.name);
             String key = null;
             try {
-                TransferManager tx = TransferManagerBuilder.standard().withS3Client(FeedStore.s3Client).build();
+                TransferManager tx = TransferManagerBuilder.standard().withS3Client(DataManager.s3Client).build();
                 key = bundlePrefix + deployment.parentProject().id + "/" + deployment.name + ".zip";
                 final Upload upload = tx.upload(this.s3Bucket, key, deploymentTempFile);
 
@@ -134,7 +143,7 @@ public class DeployJob extends MonitorableJob {
                 String copyKey = bundlePrefix + deployment.parentProject().id + "/" + deployment.parentProject().name.toLowerCase() + "-latest.zip";
                 CopyObjectRequest copyObjRequest = new CopyObjectRequest(
                     this.s3Bucket, key, this.s3Bucket, copyKey);
-                FeedStore.s3Client.copyObject(copyObjRequest);
+                DataManager.s3Client.copyObject(copyObjRequest);
             } catch (AmazonClientException|InterruptedException e) {
                 statusMessage = String.format("Error uploading (or copying) deployment bundle to s3://%s/%s", s3Bucket, key);
                 LOG.error(statusMessage);

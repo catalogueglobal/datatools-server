@@ -3,8 +3,6 @@ package com.conveyal.datatools.manager.models;
 
 import java.awt.geom.Rectangle2D;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,7 +17,6 @@ import java.util.List;
 
 import com.conveyal.datatools.common.status.MonitorableJob;
 import com.conveyal.datatools.manager.DataManager;
-import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.conveyal.datatools.manager.persistence.Persistence;
 import com.conveyal.datatools.manager.utils.HashUtils;
 import com.conveyal.gtfs.BaseGTFSCache;
@@ -63,8 +60,6 @@ public class FeedVersion extends Model implements Serializable {
     private static final String VERSION_ID_DATE_FORMAT = "yyyyMMdd'T'HHmmssX";
     private static final String HUMAN_READABLE_TIMESTAMP_FORMAT = "MM/dd/yyyy H:mm";
     private static final Logger LOG = LoggerFactory.getLogger(FeedVersion.class);
-    // FIXME: move this out of FeedVersion (also, it should probably not be public)?
-    public static FeedStore feedStore = new FeedStore();
 
     /**
      * We generate IDs manually, but we need a bit of information to do so
@@ -143,29 +138,25 @@ public class FeedVersion extends Model implements Serializable {
     public String hash;
 
     public File retrieveGtfsFile() {
-        return feedStore.getFeed(id);
+        return DataManager.feedStore.getFeed(id);
     }
 
-    public File newGtfsFile(InputStream inputStream) {
-        File file = feedStore.newFeed(id, inputStream, parentFeedSource());
-        // fileSize field will not be stored until new FeedVersion is stored in MongoDB (usually in
-        // the final steps of ValidateFeedJob).
-        this.fileSize = file.length();
-        LOG.info("New GTFS file saved: {}", id);
-        return file;
-    }
-    public File newGtfsFile(InputStream inputStream, Long lastModified) {
-        File file = newGtfsFile(inputStream);
-        // fileTimestamp field will not be stored until new FeedVersion is stored in MongoDB (usually in
-        // the final steps of ValidateFeedJob).
-        if (lastModified != null) {
-            this.fileTimestamp = lastModified;
-            file.setLastModified(lastModified);
-        } else {
-            this.fileTimestamp = file.lastModified();
+    /**
+     * Called when a new GTFS file has been written to disk in order to store its properties in the application database.
+     * The fields will not be stored until the feedVersion is persisted in MongoDB, so this should be called before the
+     * storage operation.
+     */
+    public void updateFields(String name, File file, FeedSource.FeedRetrievalMethod retrievalMethod) {
+        if (name != null) {
+            // Only set name if value is not null
+            this.name = name;
         }
-        return file;
+        this.retrievalMethod = retrievalMethod;
+        this.fileSize = file.length();
+        this.hash = HashUtils.hashFile(file);
+        LOG.info("New GTFS file saved: {}", id);
     }
+
     // FIXME return sql-loader Feed object.
     @JsonIgnore
     public Feed retrieveFeed() {
@@ -206,14 +197,6 @@ public class FeedVersion extends Model implements Serializable {
     /** SQL namespace for GTFS data */
     public String namespace;
 
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
     public String formattedTimestamp() {
         SimpleDateFormat format = new SimpleDateFormat(HUMAN_READABLE_TIMESTAMP_FORMAT);
         return format.format(this.updated);
@@ -252,28 +235,17 @@ public class FeedVersion extends Model implements Serializable {
 
         // STEP 2. Upload GTFS to S3 (storage on local machine is done when feed is fetched/uploaded)
         if (DataManager.useS3) {
-            try {
-                boolean fileUploaded = FeedVersion.feedStore.uploadToS3(gtfsFile, this.id, this.parentFeedSource());
-                if (fileUploaded) {
-                    // Delete local copy of feed version after successful s3 upload
-                    boolean fileDeleted = gtfsFile.delete();
-                    if (fileDeleted) {
-                        LOG.info("Local GTFS file deleted after s3 upload");
-                    } else {
-                        LOG.error("Local GTFS file failed to delete. Server may encounter storage capacity issues!");
-                    }
+            boolean uploadSuccess = DataManager.feedStore.uploadToS3(gtfsFile, id, true);
+            if (uploadSuccess) {
+                // If upload is successful, delete local copy of feed version.
+                boolean fileDeleted = gtfsFile.delete();
+                if (fileDeleted) {
+                    LOG.info("Local GTFS file deleted after s3 upload");
                 } else {
-                    LOG.error("Local GTFS file not uploaded not successfully to s3!");
+                    LOG.error("Local GTFS file failed to delete. Server may encounter storage capacity issues!");
                 }
-                // FIXME: should this happen here?
-                FeedSource fs = parentFeedSource();
-                if (fs.isPublic) {
-                    // make feed version public... this shouldn't take very long
-                    fs.makePublic();
-                }
-            } catch (Exception e) {
-                LOG.error("Could not upload version {} to s3 bucket", this.id);
-                e.printStackTrace();
+                // Update latest GTFS for feed source with new version.
+                DataManager.feedStore.copyVersionToS3Latest(id, parentFeedSource());
             }
         }
     }
@@ -298,6 +270,7 @@ public class FeedVersion extends Model implements Serializable {
         try {
             LOG.info("Beginning validation...");
             // run validation on feed version
+            status.update(false, "Validating...", 5);
             // FIXME: pass status to validate? Or somehow listen to events?
             validationResult = GTFS.validate(feedLoadResult.uniqueIdentifier, DataManager.GTFS_DATA_SOURCE);
         } catch (Exception e) {
@@ -313,10 +286,6 @@ public class FeedVersion extends Model implements Serializable {
 
     public void validate() {
         validate(null);
-    }
-
-    public void hash () {
-        this.hash = HashUtils.hashFile(retrieveGtfsFile());
     }
 
     public TransportNetwork buildTransportNetwork(MonitorableJob.Status status) {
@@ -395,7 +364,7 @@ public class FeedVersion extends Model implements Serializable {
     @JsonIgnore
     private static File downloadOSMFile(Rectangle2D bounds) {
         if (bounds != null) {
-            String baseDir = FeedStore.basePath.getAbsolutePath() + File.separator + "osm";
+            String baseDir = DataManager.storageDirectory.getAbsolutePath() + File.separator + "osm";
             File osmPath = new File(String.format("%s/%.6f_%.6f_%.6f_%.6f", baseDir, bounds.getMaxX(), bounds.getMaxY(), bounds.getMinX(), bounds.getMinY()));
             if (!osmPath.exists()) {
                 osmPath.mkdirs();
@@ -453,7 +422,7 @@ public class FeedVersion extends Model implements Serializable {
         }
 
         // FIXME: this is really messy.
-        Long timestamp = feedStore.getFeedLastModified(id);
+        Long timestamp = DataManager.feedStore.getFeedLastModified(id);
         Persistence.feedVersions.updateField(id, "fileTimestamp", timestamp);
 
         return this.fileTimestamp;
@@ -469,7 +438,7 @@ public class FeedVersion extends Model implements Serializable {
         }
 
         // FIXME: this is really messy.
-        Long feedVersionSize = feedStore.getFeedSize(id);
+        Long feedVersionSize = DataManager.feedStore.getFeedSize(id);
         Persistence.feedVersions.updateField(id, "fileSize", feedVersionSize);
 
         return fileSize;
@@ -483,6 +452,7 @@ public class FeedVersion extends Model implements Serializable {
      * Remove this feed version from all Deployments [shouldn't we be updating the version rather than deleting it?]
      * Remove the transport network file from the local disk
      * Finally delete the version object from the database.
+     * TODO: Should this delete the feed version tables in the SQL database?
      */
     public void delete() {
         try {
@@ -494,9 +464,9 @@ public class FeedVersion extends Model implements Serializable {
             if (latest != null && latest.id.equals(this.id)) {
                 // Even if there are previous feed versions, we set to null to allow re-fetching the version that was just deleted
                 // TODO instead, set it to the fetch time of the previous feed version
-                Persistence.feedSources.update(fs.id, "{lastFetched:null}");
+                Persistence.feedSources.updateField(fs.id, "lastFetched", null);
             }
-            feedStore.deleteFeed(id);
+            DataManager.feedStore.deleteGtfsFile(id);
             // Remove this FeedVersion from all Deployments associated with this FeedVersion's FeedSource's Project
             // TODO TEST THOROUGHLY THAT THIS UPDATE EXPRESSION IS CORRECT
             // Although outright deleting the feedVersion from deployments could be surprising and shouldn't be done anyway.
@@ -515,7 +485,7 @@ public class FeedVersion extends Model implements Serializable {
     private String r5Path() {
         // r5 networks MUST be stored in separate directories (in this case under feed source ID
         // because of shared osm.mapdb used by r5 networks placed in same dir
-        File r5 = new File(String.join(File.separator, FeedStore.basePath.getAbsolutePath(), this.feedSourceId));
+        File r5 = new File(String.join(File.separator, DataManager.storageDirectory.getAbsolutePath(), this.feedSourceId));
         if (!r5.exists()) {
             r5.mkdirs();
         }
