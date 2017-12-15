@@ -6,6 +6,7 @@ import com.conveyal.datatools.editor.datastore.VersionedDataStore;
 import com.conveyal.datatools.editor.models.transit.ScheduleException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 
 import com.conveyal.datatools.manager.models.JsonViews;
 import com.conveyal.datatools.manager.utils.json.JsonManager;
@@ -99,14 +100,7 @@ public class ScheduleExceptionController {
             if (tx.exceptions.containsKey(ex.id)) {
                 halt(400);
             }
-            if (ex.dates != null) {
-                for (LocalDate date : ex.dates) {
-                    if (tx.scheduleExceptionCountByDate.containsKey(date) && tx.scheduleExceptionCountByDate.get(date) > 0) {
-                        halt(400);
-                    }
-                }
-            }
-
+            checkDuplicateDates(ex, tx.exceptions.values());
             tx.exceptions.put(ex.id, ex);
 
             tx.commit();
@@ -164,6 +158,7 @@ public class ScheduleExceptionController {
                 halt(400);
             }
 
+            checkDuplicateDates(ex, tx.exceptions.values());
             tx.exceptions.put(ex.id, ex);
 
             tx.commit();
@@ -180,7 +175,24 @@ public class ScheduleExceptionController {
         }
         return null;
     }
-    
+
+    /** Check that no dates for the schedule exception are repeated across all schedule exceptions for the feed. */
+    private static void checkDuplicateDates(ScheduleException ex, Collection<ScheduleException> exceptions) {
+        if (ex.dates != null) {
+            for (LocalDate date : ex.dates) {
+                // This is inefficient, but it keeps us from using the scheduleExceptionCountByDate map
+                // which had significant issues with mapdb corruption likely due to the use of BindUtils.multiHistogram
+                // which we believe is making an auto-updated view or triggers or something. It's likely that there's some
+                // bug in combining these views with transactions.
+                for (ScheduleException exception : exceptions) {
+                    if (exception.dates.contains(date)) {
+                        halt(400);
+                    }
+                }
+            }
+        }
+    }
+
     public static Object deleteScheduleException (Request req, Response res) {
         String id = req.params("id");
         String feedId = req.queryParams("feedId");
