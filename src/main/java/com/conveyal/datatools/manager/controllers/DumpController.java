@@ -1,5 +1,8 @@
 package com.conveyal.datatools.manager.controllers;
 
+import com.conveyal.datatools.editor.datastore.GlobalTx;
+import com.conveyal.datatools.editor.datastore.VersionedDataStore;
+import com.conveyal.datatools.editor.models.Snapshot;
 import com.conveyal.datatools.manager.auth.Auth0UserProfile;
 import com.conveyal.datatools.manager.auth.Auth0Users;
 import com.conveyal.datatools.manager.models.Deployment;
@@ -22,6 +25,7 @@ import spark.Response;
 
 import java.io.IOException;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.Iterator;
@@ -47,6 +51,7 @@ public class DumpController {
         //        public Collection<Auth0UserProfile> users;
         public Collection<Deployment> deployments;
         public Collection<ExternalFeedSourceProperty> externalProperties;
+        public Collection<Snapshot> snapshots;
     }
 
     private static JsonManager<DatabaseState> json =
@@ -60,7 +65,9 @@ public class DumpController {
         db.notes = Note.getAll();
         db.deployments = Deployment.getAll();
         db.externalProperties = ExternalFeedSourceProperty.getAll();
-
+        GlobalTx gtx = VersionedDataStore.getGlobalTx();
+        db.snapshots = new ArrayList<>(gtx.snapshots.values());
+        gtx.rollback();
         return db;
     }
 
