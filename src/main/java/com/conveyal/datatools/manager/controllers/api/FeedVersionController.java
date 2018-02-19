@@ -41,6 +41,7 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import spark.Request;
@@ -353,6 +354,12 @@ public class FeedVersionController  {
      */
     public static Object getFeedDownloadCredentials(Request req, Response res) {
         FeedVersion version = requestFeedVersion(req, "view");
+
+        Auth0UserProfile userProfile = req.attribute("user");
+
+        if (userProfile.isExportRestricted()) {
+            halt(HttpStatus.SC_UNAUTHORIZED, "Demo account user unauthorized to download data.");
+        }
 
         // if storing feeds on s3, return temporary s3 credentials for that zip file
         if (DataManager.useS3) {

@@ -269,6 +269,22 @@ public class Auth0UserProfile {
         return false;
     }
 
+    /**
+     * Checks if user is restricted from downloading data from the data tools application. The primary use case for this
+     * flag is for demo account users. The `export-restricted` flag must be included in the application-level permissions
+     * for this to return true.
+     */
+    public boolean isExportRestricted() {
+        if(app_metadata.getDatatoolsInfo() != null && app_metadata.getDatatoolsInfo().permissions != null) {
+            for(Permission permission : app_metadata.getDatatoolsInfo().permissions) {
+                if(permission.type.equals("export-restricted")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public Organization getAuth0Organization() {
         if(app_metadata.getDatatoolsInfo() != null && app_metadata.getDatatoolsInfo().organizations != null && app_metadata.getDatatoolsInfo().organizations.length != 0) {
             return app_metadata.getDatatoolsInfo().organizations[0];
