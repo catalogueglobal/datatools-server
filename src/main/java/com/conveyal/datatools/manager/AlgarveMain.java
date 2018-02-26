@@ -66,25 +66,23 @@ public class AlgarveMain {
      * sql-server-domain-name.rds.amazonaws.com DB_USERNAME DB_PASSWORD [S3_BUCKET backup_filename.bak /path/to/backup/file/]
      *
      */
-    public static void main(String[] args) throws SQLException, IOException, FactoryException, TransformException {
+    public static void main(String[] args) throws SQLException, FactoryException, TransformException {
 
 
         // Step 1: Create new feed source or use pre-defined feed source ID to determine where to load new feed version
-
-
         String server = args[0];
         String username = args[1];
         String password = args[2];
 
+
+        boolean loadIntoDb = args.length == 6;
         // if load args present, restore db from .bak file before doing anything else.
-        if (args.length == 6) {
+        if (loadIntoDb) {
             String bucket = args[3];
             String bakFile = args[4];
             String dir = args[5];
             loadBakFile(bucket, bakFile, dir);
             restoreSQLServerDBFromS3(bucket, bakFile, server, username, password);
-            // FIXME: maybe we just run some standard SQL script on the import here.
-//            addSupplementaryFields(server, username, password);
         }
 
         GTFSFeed gtfsFeed = new GTFSFeed();
@@ -93,13 +91,34 @@ public class AlgarveMain {
         // STEP 3: Iterate over tables and construct GTFS entities.
         connection = connectToSQLServer(server, username, password);
 
-//        dataSource
-
+        // If loading into SQL server for the first time, add supplementary fields.
+        if (loadIntoDb) addSupplementaryFields(server, username, password);
 
         loadTables(gtfsFeed);
+        String filePath = "/Users/landon/Downloads/algarve.zip";
+        LOG.info("Writing feed to {}", filePath);
+        gtfsFeed.toFile(filePath);
 
-        gtfsFeed.toFile("/Users/landon/Downloads/algarve.zip");
+    }
 
+    private static void addSupplementaryFields(String server, String username, String password) throws SQLException {
+        // TABLE PREPARATION FIXME: substitute table/column names
+        LOG.info("Adding supplementary columns...");
+        // Create new columns in two tables
+        executeUpdate(String.format("ALTER TABLE %s ADD %s VARCHAR(50)", CALENDARS_TABLE, SERVICE_ID));
+        executeUpdate(String.format("ALTER TABLE %s ADD %s VARCHAR(50)", TRIPS_TABLE, SERVICE_ID));
+        executeUpdate(String.format("ALTER TABLE %s ADD %s VARCHAR(100)", TRIPS_TABLE, TRIP_ID));
+        executeUpdate(String.format("ALTER TABLE %s ADD %s VARCHAR(50)", TRIPS_TABLE, STOP_SEQUENCE));
+
+        // Set trip_id field value
+        executeUpdate(String.format("UPDATE %s SET %s = %s * 1000 + %s", CALENDARS_TABLE, SERVICE_ID, CALENDAR_ID, FREQUENCY_ID));
+
+        // Update CarreiraCirculacaoFrequencia with new value based on common frequency id
+        executeUpdate(String.format("UPDATE ccf SET ccf.%s = pa.%s FROM %s ccf INNER JOIN %s pa ON ccf.%s = pa.%s", SERVICE_ID, SERVICE_ID, TRIPS_TABLE, CALENDARS_TABLE, FREQUENCY_ID, FREQUENCY_ID));
+
+        // Generate "trip id"
+        executeUpdate(String.format("UPDATE %s SET %s = CONCAT(%s, %s, %s, SentidoCirculacao)", TRIPS_TABLE, TRIP_ID, ROUTE_ID, SERVICE_ID, CIRCULATION_ID));
+        executeUpdate(String.format("UPDATE %s SET IdCarSen = IdCarreira x 100 + SentidoCirculacao / Sentidotroco", TRIPS_TABLE));
     }
 
     private static void loadTables(GTFSFeed gtfsFeed) throws FactoryException, SQLException, TransformException {
