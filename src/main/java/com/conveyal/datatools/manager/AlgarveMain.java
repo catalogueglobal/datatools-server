@@ -52,7 +52,7 @@ import static com.conveyal.datatools.manager.utils.AlgarveConstants.*;
  * Created by landon on 9/8/17.
  */
 public class AlgarveMain {
-    private static final String LIMIT = "TOP 100";
+    private static final String LIMIT = ""; // "TOP 100";
     public static final Logger LOG = LoggerFactory.getLogger(AlgarveMain.class);
     private static Connection connection;
     private static AmazonS3 s3;
@@ -130,13 +130,16 @@ public class AlgarveMain {
 
         // LOAD STOPS
         // TODO: remove limit (set to 100 to prevent selecting all items)
-        String stopFields = String.join(",", STOP_ID, SHAPE, NAME);
+        String stopFields = String.join(", ", STOP_ID, SHAPE, NAME);
         String selectStops = String.format("SELECT %s %s FROM %s", LIMIT, stopFields, STOPS_TABLE);
+        LOG.info(selectStops);
         PreparedStatement preparedStatementStops = connection.prepareStatement(selectStops);
         ResultSet stopResults = preparedStatementStops.executeQuery();
 
+        int stopCount = 0;
         // iterate over stops from resultSet
         while (stopResults.next()) {
+            stopCount++;
             String id = stopResults.getString(STOP_ID);
             String name = stopResults.getString(NAME);
             String geom = stopResults.getString(LAT_LNG);
@@ -150,9 +153,9 @@ public class AlgarveMain {
             stop.stop_name = name;
             stop.stop_lon = targetCoordinate.x;
             stop.stop_lat = targetCoordinate.y;
-            LOG.info("Importing stop id: {}, name: {}, lat_lng: {}, {}", id, name, stop.stop_lat, stop.stop_lon);
             gtfsFeed.stops.put(id, stop);
         }
+        LOG.info("Imported {} stops", stopCount);
 
         // LOAD AGENCY (there is only one and it is defined by constants rather than SQL results)
         Agency agency = new Agency();
@@ -171,109 +174,141 @@ public class AlgarveMain {
 
         // LOAD ROUTES
         // TODO: remove limit (set to 100 to prevent selecting all items)
-        String routeFields = String.join(",", ROUTE_ID, ROUTE_SHORT_NAME, NAME);
+        String routeFields = String.join(", ", ROUTE_ID, ROUTE_SHORT_NAME, NAME);
         String routeSelect = String.format("SELECT %s %s FROM %s", LIMIT, routeFields, ROUTES_TABLE);
         PreparedStatement routePreparedStatement = connection.prepareStatement(routeSelect);
         ResultSet routeResults = routePreparedStatement.executeQuery();
 
+        int routeCount = 0;
         // iterate over routes from resultSet
         while (routeResults.next()) {
+            routeCount++;
             Route route = new Route();
             String id = routeResults.getString(ROUTE_ID);
             route.agency_id = agencyId; // From constant field above
             route.route_id = id;
             route.route_short_name = routeResults.getString(ROUTE_SHORT_NAME);
             route.route_long_name = routeResults.getString(NAME);
-            LOG.info("Importing route id: {}, name: {}", id, route.route_short_name);
             gtfsFeed.routes.put(id, route);
         }
+        LOG.info("Imported {} routes", routeCount);
 
         // LOAD TRIPS
         // TODO: remove limit (set to 100 to prevent selecting all items)
-        String tripFields = String.join(",", ROUTE_ID, TRIP_ID, SERVICE_ID);
+        String tripFields = String.join(", ", ROUTE_ID, TRIP_ID, SERVICE_ID);
         String tripSelect = String.format("SELECT %s %s FROM %s", LIMIT, tripFields, TRIPS_TABLE);
+        LOG.info(tripSelect);
         PreparedStatement tripPreparedStatement = connection.prepareStatement(tripSelect);
         ResultSet tripResults = tripPreparedStatement.executeQuery();
 
+        int tripCount = 0;
         // iterate over trips from resultSet
         while (tripResults.next()) {
+            tripCount++;
             Trip trip = new Trip();
             String id = tripResults.getString(TRIP_ID);
             trip.trip_id = id;
             trip.route_id = tripResults.getString(ROUTE_ID);
             trip.service_id = tripResults.getString(SERVICE_ID);
-            LOG.info("Importing trip id: {}, route: {}", id, trip.route_id);
+//            LOG.info("Importing trip id: {}, route: {}", id, trip.route_id);
             gtfsFeed.trips.put(id, trip);
         }
+        LOG.info("Imported {} trips", tripCount);
 
         // LOAD CALENDARS
         // TODO: remove limit (set to 100 to prevent selecting all items)
-        String calendarFields = String.join(",", SERVICE_ID, START_DATE, END_DATE);
+        String calendarFields = String.join(", ", SERVICE_ID, START_DATE, END_DATE);
         // TODO: make this a join select on calendars and frequencies
-        String calendarSelect = String.format("SELECT %s %s FROM %s", LIMIT, calendarFields, CALENDARS_TABLE);
+        String calendarSelect = String.format("SELECT * %s FROM %s, %s WHERE %s.%s = %s.%s", LIMIT, CALENDARS_TABLE, FREQUENCIES_TABLE, CALENDARS_TABLE, FREQUENCY_ID, FREQUENCIES_TABLE, FREQUENCY_ID);
+        LOG.info(calendarSelect);
         PreparedStatement calendarPreparedStatement = connection.prepareStatement(calendarSelect);
         ResultSet calendarResults = calendarPreparedStatement.executeQuery();
 
         DateFormat dateFormat = new SimpleDateFormat("yyyyMMdd");
 
+        int calendarCount = 0;
         // iterate over calendars from resultSet
         while (calendarResults.next()) {
-            Calendar calendar = new Calendar();
+            calendarCount++;
             String id = calendarResults.getString(SERVICE_ID);
             Service service = gtfsFeed.services.computeIfAbsent(id, Service::new);
-            calendar.service_id = id;
-            // TODO: parse DOW values
-            calendar.start_date = Integer.parseInt(dateFormat.format(calendarResults.getDate(START_DATE)));
-            calendar.end_date = Integer.parseInt(dateFormat.format(calendarResults.getDate(END_DATE)));
-            LOG.info("Importing calendar id: {}, from: {}, to: {}", id, calendar.start_date, calendar.end_date);
+            service.calendar = new Calendar();
+            service.calendar.service_id = id;
+            service.calendar.start_date = calendarResults.getDate(START_DATE).toLocalDate();
+            service.calendar.end_date = calendarResults.getDate(END_DATE).toLocalDate();
+            service.calendar.sunday = isActiveOn(calendarResults, "1");
+            service.calendar.monday = isActiveOn(calendarResults, "2");
+            service.calendar.tuesday = isActiveOn(calendarResults, "3");
+            service.calendar.wednesday = isActiveOn(calendarResults, "4");
+            service.calendar.thursday = isActiveOn(calendarResults, "5");
+            service.calendar.friday = isActiveOn(calendarResults, "6");
+            service.calendar.saturday = isActiveOn(calendarResults, "7");
 
             gtfsFeed.services.put(id, service);
         }
+        LOG.info("Imported {} calendars", calendarCount);
 
         // LOAD CALENDAR_DATES
         // TODO: remove limit (set to 100 to prevent selecting all items)
-        String calendarDateFields = String.join(",", SERVICE_ID, START_DATE, END_DATE);
+        String calendarDateFields = String.join(", ", SERVICE_ID, START_DATE, END_DATE, "H");
         // TODO: make this a join select on calendars and frequencies
-        String calendarDateSelect = String.format("SELECT %s %s FROM %s", LIMIT, calendarDateFields, CALENDARS_TABLE);
+        String calendarDateSelect = String.format("SELECT %s * FROM %s, %s WHERE %s.%s = %s.%s", LIMIT, CALENDARS_TABLE, FREQUENCIES_TABLE, CALENDARS_TABLE, FREQUENCY_ID, FREQUENCIES_TABLE, FREQUENCY_ID);
         PreparedStatement calendarDatePreparedStatement = connection.prepareStatement(calendarDateSelect);
         ResultSet calendarDateResults = calendarDatePreparedStatement.executeQuery();
 
+        int calendarDateCount = 0;
         // iterate over calendar dates from resultSet
         while (calendarDateResults.next()) {
+            calendarDateCount++;
             CalendarDate calendarDate = new CalendarDate();
             String id = calendarDateResults.getString(SERVICE_ID);
             Service service = gtfsFeed.services.computeIfAbsent(id, Service::new);
             calendarDate.service_id = id;
-            // TODO: date field maintained in separate Holidays table?
-//            calendarDate.date = ????
+            // FIXME: date field maintained in separate Holidays table?
+             calendarDate.date = LocalDate.now();
             //TODO: New field in Frequencias table H populated by the result of the following operation
             // IF N2 minus F2 = 1 THEN EQUALS 2, but IF N2 minus F2 = -1 THEN EQUALS 1
-//            calendarDate.exception_type =
-            LOG.info("Importing calendarDate id: {}, date: {}, type: {}", id, calendarDate.date, calendarDate.exception_type);
-
+            calendarDate.exception_type = calendarDateResults.getInt("H");
+            // FIXME
+            service.calendar_dates.put(calendarDate.date, calendarDate);
             gtfsFeed.services.put(id, service);
         }
-
+        LOG.info("Imported {} calendar dates", calendarDateCount);
 
         // LOAD STOP TIMES
-        // TODO: remove limit (set to 100 to prevent selecting all items)
-        String stopTimeFields = String.join(",", TRIP_ID, ARRIVAL_TIME, STOP_SEQUENCE);
-        // TODO: make this a join select on calendars and RTrocoCarreira
-        String stopTimeSelect = String.format("SELECT %s %s FROM %s", LIMIT, stopTimeFields, CALENDARS_TABLE);
-        PreparedStatement stopTimePreparedStatement = connection.prepareStatement(stopTimeSelect);
-        ResultSet stopTimeResults = stopTimePreparedStatement.executeQuery();
+//        // TODO: remove limit (set to 100 to prevent selecting all items)
+//        String stopTimeFields = String.join(", ", TRIP_ID, ARRIVAL_TIME, STOP_SEQUENCE);
+//        // TODO: make this a join select on calendars and RTrocoCarreira
+//        String stopTimeSelect = String.format("SELECT %s %s FROM %s, %s WHERE ", LIMIT, stopTimeFields, CALENDARS_TABLE, "RTrocoCarreira");
+//        LOG.info(stopTimeSelect);
+//        PreparedStatement stopTimePreparedStatement = connection.prepareStatement(stopTimeSelect);
+//        ResultSet stopTimeResults = stopTimePreparedStatement.executeQuery();
+//
+//        // iterate over stopTimes from resultSet
+//        while (stopTimeResults.next()) {
+//            StopTime stopTime = new StopTime();
+//            stopTime.trip_id = stopTimeResults.getString(TRIP_ID);
+//            stopTime.arrival_time = stopTimeResults.getInt(ARRIVAL_TIME);
+//            stopTime.departure_time = stopTimeResults.getInt(ARRIVAL_TIME); // Same as arrival
+//            stopTime.stop_sequence = stopTimeResults.getInt(STOP_SEQUENCE);
+//            LOG.info("Importing stopTime trip_id: {}, sequence: {}", stopTime.trip_id, stopTime.stop_sequence);
+//
+//            gtfsFeed.stop_times.put(new Fun.Tuple2(stopTime.trip_id, stopTime.stop_sequence), stopTime);
+//        }
+    }
 
-        // iterate over stopTimes from resultSet
-        while (stopTimeResults.next()) {
-            StopTime stopTime = new StopTime();
-            stopTime.trip_id = stopTimeResults.getString(TRIP_ID);
-            stopTime.arrival_time = stopTimeResults.getInt(ARRIVAL_TIME);
-            stopTime.departure_time = stopTimeResults.getInt(ARRIVAL_TIME); // Same as arrival
-            stopTime.stop_sequence = stopTimeResults.getInt(STOP_SEQUENCE);
-            LOG.info("Importing stopTime trip_id: {}, sequence: {}", stopTime.trip_id, stopTime.stop_sequence);
+    private static int isActiveOn(ResultSet calendarResults, String s) throws SQLException {
+        return calendarResults.getBoolean(String.format("N%s", s)) || calendarResults.getBoolean(String.format("F%s", s))
+                ? 1
+                : 0;
+    }
 
-            gtfsFeed.stop_times.put(new Fun.Tuple2(stopTime.trip_id, stopTime.stop_sequence), stopTime);
-        }
+    private static int executeUpdate(String sql) throws SQLException {
+        LOG.info(sql);
+        PreparedStatement alterStatement = connection.prepareStatement(sql);
+        int result = alterStatement.executeUpdate();
+        LOG.info("{} rows updated", result);
+        return result;
     }
 
     private static void loadBakFile(String bucket, String bakFile, String dir) {
