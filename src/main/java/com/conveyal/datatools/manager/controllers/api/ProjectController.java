@@ -20,6 +20,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -266,6 +267,11 @@ public class ProjectController {
     private static boolean downloadMergedFeed(Request req, Response res) throws IOException {
         Project project = requestProjectById(req, "view");
         Auth0UserProfile userProfile = req.attribute("user");
+
+        if (userProfile.isExportRestricted()) {
+            halt(HttpStatus.SC_UNAUTHORIZED, "Demo account user unauthorized to download data.");
+        }
+
         // TODO: make this an authenticated call?
         MergeProjectFeedsJob mergeProjectFeedsJob = new MergeProjectFeedsJob(project, userProfile.getUser_id());
         DataManager.heavyExecutor.execute(mergeProjectFeedsJob);

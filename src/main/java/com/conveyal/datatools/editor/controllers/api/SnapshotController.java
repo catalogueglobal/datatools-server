@@ -22,6 +22,7 @@ import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.JsonViews;
 import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.conveyal.datatools.manager.utils.json.JsonManager;
+import org.apache.http.HttpStatus;
 import org.mapdb.Fun;
 import org.mapdb.Fun.Tuple2;
 import org.slf4j.Logger;
@@ -247,6 +248,10 @@ public class SnapshotController {
 
     /** Export a snapshot as GTFS */
     public static Object getSnapshotToken(Request req, Response res) {
+        Auth0UserProfile userProfile = req.attribute("user");
+        if (userProfile.isExportRestricted()) {
+            halt(HttpStatus.SC_UNAUTHORIZED, "Demo account user unauthorized to download data.");
+        }
         String id = req.params("id");
         Tuple2<String, Integer> decodedId;
         FeedDownloadToken token;

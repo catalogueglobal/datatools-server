@@ -14,6 +14,7 @@ import com.conveyal.datatools.manager.utils.json.JsonManager;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import spark.Request;
@@ -94,6 +95,10 @@ public class DeploymentController {
 
         if (!userProfile.canAdministerProject(d.projectId, d.getOrganizationId()) && !userProfile.getUser_id().equals(d.getUser()))
             halt(401);
+
+        if (userProfile.isExportRestricted()) {
+            halt(HttpStatus.SC_UNAUTHORIZED, "Demo account user unauthorized to download data.");
+        }
 
         File temp = File.createTempFile("deployment", ".zip");
         // just include GTFS, not any of the ancillary information
