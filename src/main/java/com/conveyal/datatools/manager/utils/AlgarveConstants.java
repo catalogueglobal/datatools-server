@@ -1,28 +1,7 @@
 package com.conveyal.datatools.manager.utils;
 
-import com.conveyal.gtfs.loader.EntityPopulator;
-import com.conveyal.gtfs.loader.StringField;
-import com.conveyal.gtfs.loader.Table;
-import com.conveyal.gtfs.loader.URLField;
-import com.conveyal.gtfs.model.Agency;
-import com.conveyal.gtfs.model.Stop;
-import com.vividsolutions.jts.geom.Coordinate;
-import org.geotools.geometry.jts.JTS;
-import org.geotools.referencing.CRS;
-import org.geotools.referencing.crs.DefaultGeographicCRS;
-import org.opengis.referencing.FactoryException;
-import org.opengis.referencing.crs.CoordinateReferenceSystem;
-import org.opengis.referencing.operation.MathTransform;
-import org.opengis.referencing.operation.TransformException;
-
-import static com.conveyal.gtfs.loader.EntityPopulator.getDoubleIfPresent;
-import static com.conveyal.gtfs.loader.EntityPopulator.getIntIfPresent;
-import static com.conveyal.gtfs.loader.EntityPopulator.getStringIfPresent;
-import static com.conveyal.gtfs.loader.Requirement.OPTIONAL;
-import static com.conveyal.gtfs.loader.Requirement.REQUIRED;
-
 /**
- * Created by landon on 9/25/17.
+ * Holds constants for table and column names for Algarve feed imports.
  */
 public final class AlgarveConstants {
     private AlgarveConstants() {
