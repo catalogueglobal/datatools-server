@@ -48,7 +48,6 @@ public class DumpController {
         public Collection<FeedSource> feedSources;
         public Collection<FeedVersion> feedVersions;
         public Collection<Note> notes;
-        //        public Collection<Auth0UserProfile> users;
         public Collection<Deployment> deployments;
         public Collection<ExternalFeedSourceProperty> externalProperties;
         public Collection<Snapshot> snapshots;

@@ -66,7 +66,6 @@ public abstract class Model implements Serializable {
      * Get the user who owns this object.
      * @return the String user_id
      */
-    @JsonView(JsonViews.UserInterface.class)
     public String getUser () {
         return this.userEmail;
     }
