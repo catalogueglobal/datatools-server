@@ -36,7 +36,7 @@ public abstract class Model implements Serializable {
      */
     @JsonView(JsonViews.DataDump.class)
     public String userId;
-
+    @JsonView(JsonViews.DataDump.class)
     private String userEmail;
 
     /**
@@ -66,6 +66,7 @@ public abstract class Model implements Serializable {
      * Get the user who owns this object.
      * @return the String user_id
      */
+    @JsonView(JsonViews.UserInterface.class)
     public String getUser () {
         return this.userEmail;
     }
