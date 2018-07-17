@@ -237,8 +237,9 @@ public class Auth0UserProfile {
     public boolean hasProject(String projectID, String organizationId) {
         if (canAdministerApplication()) return true;
         if (canAdministerOrganization(organizationId)) return true;
-        if(app_metadata.getDatatoolsInfo() == null || app_metadata.getDatatoolsInfo().projects == null) return false;
-        for(Project project : app_metadata.getDatatoolsInfo().projects) {
+        DatatoolsInfo datatools = app_metadata.getDatatoolsInfo();
+        if(datatools == null || datatools.projects == null) return false;
+        for(Project project : datatools.projects) {
             if (project.project_id.equals(projectID)) return true;
         }
         return false;
@@ -259,8 +260,8 @@ public class Auth0UserProfile {
     }
 
     public boolean canAdministerOrganization() {
-        if(app_metadata.getDatatoolsInfo() != null && app_metadata.getDatatoolsInfo().organizations != null) {
-            Organization org = app_metadata.getDatatoolsInfo().organizations[0];
+        Organization org = getAuth0Organization();
+        if (org != null) {
             for(Permission permission : org.permissions) {
                 if(permission.type.equals("administer-organization")) {
                     return true;
@@ -270,7 +271,7 @@ public class Auth0UserProfile {
         return false;
     }
 
-    public Organization getAuth0Organization() {
+    private Organization getAuth0Organization() {
         if(app_metadata.getDatatoolsInfo() != null && app_metadata.getDatatoolsInfo().organizations != null && app_metadata.getDatatoolsInfo().organizations.length != 0) {
             return app_metadata.getDatatoolsInfo().organizations[0];
         }
@@ -367,7 +368,7 @@ public class Auth0UserProfile {
         return false;
     }
 
-    public boolean checkFeedPermission(Project project, String feedID, String permissionType) {
+    private boolean checkFeedPermission(Project project, String feedID, String permissionType) {
         String feeds[] = project.defaultFeeds;
 
         // check for permission-specific feeds
@@ -391,10 +392,8 @@ public class Auth0UserProfile {
 
     @JsonIgnore
     public com.conveyal.datatools.manager.models.Organization getOrganization () {
-        Organization[] orgs = getApp_metadata().getDatatoolsInfo().organizations;
-        if (orgs != null && orgs.length != 0) {
-            return orgs[0] != null ? Persistence.organizations.getById(orgs[0].organizationId) : null;
-        }
-        return null;
+        Organization org = getAuth0Organization();
+        if (org != null) return Persistence.organizations.getById(org.organizationId);
+        else return null;
     }
 }

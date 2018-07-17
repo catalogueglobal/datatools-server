@@ -1,6 +1,11 @@
 package com.conveyal.datatools.manager.controllers.api;
 
-import com.conveyal.datatools.common.utils.SparkUtils;
+import com.auth0.client.auth.AuthAPI;
+import com.auth0.client.mgmt.ManagementAPI;
+import com.auth0.exception.Auth0Exception;
+import com.auth0.json.auth.TokenHolder;
+import com.auth0.json.mgmt.users.User;
+import com.auth0.net.AuthRequest;
 import com.conveyal.datatools.manager.auth.Auth0UserProfile;
 import com.conveyal.datatools.manager.models.*;
 import com.conveyal.datatools.manager.persistence.Persistence;
@@ -8,8 +13,11 @@ import com.conveyal.datatools.manager.utils.json.JsonManager;
 import com.conveyal.datatools.manager.DataManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
+import org.apache.http.HttpStatus;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.*;
 import org.apache.http.entity.ByteArrayEntity;
@@ -30,6 +38,7 @@ import com.conveyal.datatools.manager.auth.Auth0Users;
 
 import static com.conveyal.datatools.common.utils.SparkUtils.haltWithMessage;
 import static com.conveyal.datatools.manager.auth.Auth0Users.getUserById;
+import static org.apache.commons.lang.CharEncoding.UTF_8;
 import static spark.Spark.*;
 
 /**
@@ -37,9 +46,15 @@ import static spark.Spark.*;
  */
 public class UserController {
 
-    private static String AUTH0_DOMAIN = DataManager.getConfigPropertyAsText("AUTH0_DOMAIN");
+    public static String AUTH0_DOMAIN = DataManager.getConfigPropertyAsText("AUTH0_DOMAIN");
+    private static String AUTH0_URL = "https://" + AUTH0_DOMAIN + "/api/v2/users";
     private static String AUTH0_CLIENT_ID = DataManager.getConfigPropertyAsText("AUTH0_CLIENT_ID");
-    private static String AUTH0_API_TOKEN = DataManager.getConfigPropertyAsText("AUTH0_TOKEN");
+    private static String AUTH0_SECRET = DataManager.getConfigPropertyAsText("AUTH0_SECRET");
+//    private static String AUTH0_API_TOKEN = DataManager.getConfigPropertyAsText("AUTH0_TOKEN");
+    private static final AuthAPI AUTH_API = new AuthAPI(AUTH0_DOMAIN, AUTH0_CLIENT_ID, AUTH0_SECRET);
+    public static ManagementAPI mgmt;
+    private static TokenHolder holder;
+    private static final HttpClient client = HttpClientBuilder.create().build();
     private static Logger LOG = LoggerFactory.getLogger(UserController.class);
     private static ObjectMapper mapper = new ObjectMapper();
     public static JsonManager<Project> json =
@@ -50,29 +65,59 @@ public class UserController {
      * Auth0 API (get user) than the other get methods (user search query).
      */
     private static String getUser(Request req, Response res) throws IOException {
-        String url = "https://" + AUTH0_DOMAIN + "/api/v2/users/" + URLEncoder.encode(req.params("id"), "UTF-8");
-        String charset = "UTF-8";
+        String userId = req.params("id");
+        Auth0UserProfile user = req.attribute("user");
+        if (!user.getUser_id().equals(userId) && !user.canAdministerApplication()) {
+            // If the user ID does not match requesting user and user cannot administer application, do not permit the
+            // the get request.
+            haltWithMessage(401, "Must be application administrator to view user credentials.");
+        }
+        HttpGet request = new HttpGet(constructUserURL(userId));
+//        mgmt = new ManagementAPI(AUTH0_DOMAIN, holder.getAccessToken());
+        request.addHeader("Authorization", "Bearer " + getAuthToken());
+        request.setHeader("Accept-Charset", UTF_8);
 
-        HttpGet request = new HttpGet(url);
-        request.addHeader("Authorization", "Bearer " + AUTH0_API_TOKEN);
-        request.setHeader("Accept-Charset", charset);
-
-        HttpClient client = HttpClientBuilder.create().build();
         HttpResponse response = client.execute(request);
-        String result = EntityUtils.toString(response.getEntity());
+        return EntityUtils.toString(response.getEntity());
+    }
 
-        return result;
+    private static User getUserInfo(Request req, Response res) throws IOException {
+        User user = req.attribute("authUser");
+        return user;
+    }
+
+    public static String getAuthToken () {
+        String token;
+        if (holder != null && holder.getExpiresIn() > 1000) {
+            token = holder.getAccessToken();
+            if (token != null) return token;
+        }
+        // If token not found, fetch new token.
+        AuthRequest authRequest = AUTH_API.requestToken(String.format("https://%s/api/v2/", AUTH0_DOMAIN))
+                .setScope("read:users read:user_idp_tokens");
+//                .setScope("read:user_idp_tokens")
+//                .setScope("openid email nickname");
+        try {
+            LOG.info("Fetching new Auth0 token");
+            holder = authRequest.execute();
+        } catch (Auth0Exception e) {
+            e.printStackTrace();
+            throw new IllegalStateException("Could not fetch Auth0 token");
+        }
+        LOG.info("New token expires in {}", holder.getExpiresIn());
+        return holder.getAccessToken();
     }
 
     /**
      * HTTP endpoint to get all users for the application (using a filtered search on all users for the Auth0 tenant).
      */
-    private static String getAllUsers(Request req, Response res) throws IOException {
+    private static String getAllUsers(Request req, Response res) {
+        // NOTE: permissions check for user occurs in the filterUserSearchQuery call (filters user list by organization
+        // if applicable and halts request if user is not an application or organization admin).
         res.type("application/json");
         int page = Integer.parseInt(req.queryParams("page"));
         String queryString = filterUserSearchQuery(req);
-        String users = Auth0Users.getAuth0Users(queryString, page);
-        return users;
+        return Auth0Users.getAuth0Users(queryString, page);
     }
 
     /**
@@ -120,30 +165,28 @@ public class UserController {
      * injecting permissions somehow into the create user request.
      */
     private static String createPublicUser(Request req, Response res) throws IOException {
-        String url = "https://" + AUTH0_DOMAIN + "/api/v2/users";
-        String charset = "UTF-8";
-
-        HttpPost request = new HttpPost(url);
-        request.addHeader("Authorization", "Bearer " + AUTH0_API_TOKEN);
-        request.setHeader("Accept-Charset", charset);
+        // Construct JSON for new user object.
+        JsonNode requestJSON = mapper.readTree(req.body());
+        ObjectNode datatoolsObject = mapper.createObjectNode();
+        datatoolsObject.set("permissions", mapper.createArrayNode());
+        datatoolsObject.set("projects", mapper.createArrayNode());
+        datatoolsObject.set("subscriptions", mapper.createArrayNode());
+        datatoolsObject.put("client_id", AUTH0_CLIENT_ID);
+        ObjectNode json = constructUserJSON(requestJSON.get("email").asText(), requestJSON.get("password").asText(), datatoolsObject);
+        LOG.info("Creating user for {}", json.get("email").asText());
+        // Construct HTTP request.
+        HttpPost request = new HttpPost(AUTH0_URL);
+        request.addHeader("Authorization", "Bearer " + getAuthToken());
+        request.setHeader("Accept-Charset", UTF_8);
         request.setHeader("Content-Type", "application/json");
-        JsonNode jsonNode = mapper.readTree(req.body());
-        String json = String.format("{" +
-                "\"connection\": \"Username-Password-Authentication\"," +
-                "\"email\": %s," +
-                "\"password\": %s," +
-                "\"app_metadata\": {\"datatools\": [{\"permissions\": [], \"projects\": [], \"subscriptions\": [], \"client_id\": \"%s\" }] } }",
-                jsonNode.get("email"), jsonNode.get("password"), AUTH0_CLIENT_ID);
-        HttpEntity entity = new ByteArrayEntity(json.getBytes(charset));
+        HttpEntity entity = new ByteArrayEntity(json.toString().getBytes(UTF_8));
         request.setEntity(entity);
-
-        HttpClient client = HttpClientBuilder.create().build();
+        // Execute create user request to Auth0.
         HttpResponse response = client.execute(request);
-        String result = EntityUtils.toString(response.getEntity());
         int statusCode = response.getStatusLine().getStatusCode();
         if(statusCode >= 300) haltWithMessage(statusCode, response.toString());
 
-        return result;
+        return EntityUtils.toString(response.getEntity());
     }
 
     /**
@@ -152,92 +195,125 @@ public class UserController {
      * FIXME: This endpoint fails if the user's email already exists in the Auth0 tenant.
      */
     private static String createUser(Request req, Response res) throws IOException {
-        String url = "https://" + AUTH0_DOMAIN + "/api/v2/users";
-        String charset = "UTF-8";
-
-        HttpPost request = new HttpPost(url);
-        request.addHeader("Authorization", "Bearer " + AUTH0_API_TOKEN);
-        request.setHeader("Accept-Charset", charset);
-        request.setHeader("Content-Type", "application/json");
+        // Check permissions
+        Auth0UserProfile user = req.attribute("user");
+        if (!user.canAdministerApplication() && !user.canAdministerOrganization()) {
+            // If the user cannot administer application or an organization, do not permit the
+            // the get request.
+            haltWithMessage(HttpStatus.SC_UNAUTHORIZED, "Must be application or organization administrator to create user.");
+        }
+        // Construct user JSON.
         JsonNode jsonNode = mapper.readTree(req.body());
-        String json = String.format("{" +
-                "\"connection\": \"Username-Password-Authentication\"," +
-                "\"email\": %s," +
-                "\"password\": %s," +
-                "\"app_metadata\": {\"datatools\": [%s] } }"
-                , jsonNode.get("email"), jsonNode.get("password"), jsonNode.get("permissions"));
-        HttpEntity entity = new ByteArrayEntity(json.getBytes(charset));
+        ObjectNode json = constructUserJSON(jsonNode.get("email").asText(), jsonNode.get("password").asText(), jsonNode.get("permissions"));
+        LOG.info("Creating user: {}", json.get("email"));
+        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(json);
+        // Construct HTTP request
+        HttpPost request = new HttpPost(AUTH0_URL);
+        request.addHeader("Authorization", "Bearer " + getAuthToken());
+        request.setHeader("Accept-Charset", UTF_8);
+        request.setHeader("Content-Type", "application/json");
+        HttpEntity entity = new ByteArrayEntity(json.toString().getBytes(UTF_8));
         request.setEntity(entity);
-
-        HttpClient client = HttpClientBuilder.create().build();
+        // Execute request to Auth0.
         HttpResponse response = client.execute(request);
         String result = EntityUtils.toString(response.getEntity());
-
         int statusCode = response.getStatusLine().getStatusCode();
-        if(statusCode >= 300) haltWithMessage(statusCode, response.toString());
-
-        System.out.println(result);
-
+        if (statusCode >= 300) haltWithMessage(statusCode, response.toString());
         return result;
     }
 
-    private static Object updateUser(Request req, Response res) throws IOException {
+    /**
+     * Helper method to construct an Auth0 user for use in a create user request.
+     */
+    private static ObjectNode constructUserJSON(String email, String password, JsonNode datatoolsObject) {
+        ObjectNode userJSON = mapper.createObjectNode();
+        ObjectNode appMetadata = mapper.createObjectNode();
+        userJSON.put("connection", "Username-Password-Authentication");
+        userJSON.put("email", email);
+        userJSON.put("password", password);
+        ArrayNode datatoolsList = mapper.createArrayNode();
+        datatoolsList.add(datatoolsObject);
+        appMetadata.set("datatools", datatoolsList);
+        userJSON.set("app_metadata", appMetadata);
+        return userJSON;
+    }
+
+    /**
+     * Helper method to construct the Auth0 URL for the provided user ID.
+     */
+    private static String constructUserURL (String userId) {
+        try {
+            return String.join("/", AUTH0_URL, URLEncoder.encode(userId, UTF_8));
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+            throw new IllegalStateException("User ID cannot be URL-encoded.");
+        }
+    }
+
+    /**
+     * Update the app_metadata object for the specified Auth0 user.
+     */
+    private static String updateUser(Request req, Response res) throws IOException {
+        // Check permissions
+        Auth0UserProfile user = req.attribute("user");
+        if (!user.canAdministerApplication() && !user.canAdministerOrganization()) {
+            // If the user cannot administer application or an organization, do not permit the
+            // the get request.
+            haltWithMessage(HttpStatus.SC_UNAUTHORIZED, "Must be application or organization administrator to update user.");
+        }
         String userId = req.params("id");
-        Auth0UserProfile user = getUserById(userId);
+        Auth0UserProfile userToUpdate = getUserById(userId);
+        if (userToUpdate == null) {
+            // Halt if the user ID provided is not valid (i.e., user does not exist for Auth0 tenant).
+            haltWithMessage(400, "User ID not valid.");
+            return null;
+        }
 
-        LOG.info("Updating user {}", user.getEmail());
+        LOG.info("Updating user {}", userToUpdate.getEmail());
 
-        String url = "https://" + AUTH0_DOMAIN + "/api/v2/users/" + URLEncoder.encode(userId, "UTF-8");
-        String charset = "UTF-8";
+        HttpPatch request = new HttpPatch(constructUserURL(userId));
 
-
-        HttpPatch request = new HttpPatch(url);
-
-        request.addHeader("Authorization", "Bearer " + AUTH0_API_TOKEN);
-        request.setHeader("Accept-Charset", charset);
+        request.addHeader("Authorization", "Bearer " + getAuthToken());
+        request.setHeader("Accept-Charset", UTF_8);
         request.setHeader("Content-Type", "application/json");
 
         JsonNode jsonNode = mapper.readTree(req.body());
-//        JsonNode data = mapper.readValue(jsonNode.retrieveById("data"), Auth0UserProfile.DatatoolsInfo.class); //jsonNode.retrieveById("data");
         JsonNode data = jsonNode.get("data");
-        System.out.println(data.asText());
-        Iterator<Map.Entry<String, JsonNode>> fieldsIter = data.fields();
-        while (fieldsIter.hasNext()) {
-            Map.Entry<String, JsonNode> entry = fieldsIter.next();
-            System.out.println(entry.getValue());
-        }
-//        if (!data.has("client_id")) {
-//            ((ObjectNode)data).put("client_id", DataManager.config.retrieveById("auth0").retrieveById("client_id").asText());
-//        }
-        String json = "{ \"app_metadata\": { \"datatools\" : " + data + " }}";
-        System.out.println(json);
-        HttpEntity entity = new ByteArrayEntity(json.getBytes(charset));
+        ObjectNode json = mapper.createObjectNode();
+        ObjectNode datatools = mapper.createObjectNode();
+        datatools.set("datatools", data);
+        json.set("app_metadata", datatools);
+        HttpEntity entity = new ByteArrayEntity(json.toString().getBytes(UTF_8));
         request.setEntity(entity);
 
-        HttpClient client = HttpClientBuilder.create().build();
         HttpResponse response = client.execute(request);
-        String result = EntityUtils.toString(response.getEntity());
-
-        return mapper.readTree(result);
+        return EntityUtils.toString(response.getEntity());
     }
 
+    /**
+     * Delete an Auth0 user by ID.
+     */
     private static Object deleteUser(Request req, Response res) throws IOException {
-        String url = "https://" + AUTH0_DOMAIN + "/api/v2/users/" + URLEncoder.encode(req.params("id"), "UTF-8");
-        String charset = "UTF-8";
-
+        // Check permissions
+        Auth0UserProfile user = req.attribute("user");
+        if (!user.canAdministerApplication() && !user.canAdministerOrganization()) {
+            // If the user cannot administer application or an organization, do not permit the
+            // the get request.
+            haltWithMessage(HttpStatus.SC_UNAUTHORIZED, "Must be application or organization administrator to delete user.");
+        }
+        String url = constructUserURL(req.params("id"));
         HttpDelete request = new HttpDelete(url);
-        request.addHeader("Authorization", "Bearer " + AUTH0_API_TOKEN);
-        request.setHeader("Accept-Charset", charset);
+        request.addHeader("Authorization", "Bearer " + getAuthToken());
+        request.setHeader("Accept-Charset", UTF_8);
 
-        HttpClient client = HttpClientBuilder.create().build();
         HttpResponse response = client.execute(request);
         int statusCode = response.getStatusLine().getStatusCode();
-        if(statusCode >= 300) haltWithMessage(statusCode, response.getStatusLine().getReasonPhrase());
+        if (statusCode >= 300) haltWithMessage(statusCode, response.getStatusLine().getReasonPhrase());
 
         return true;
     }
 
-    private static Object getRecentActivity(Request req, Response res) {
+    private static List<Activity> getRecentActivity(Request req, Response res) {
         Auth0UserProfile userProfile = req.attribute("user");
 
         /* TODO: Allow custom from/to range
@@ -297,14 +373,14 @@ public class UserController {
                 case "project-updated":
                     // Iterate through Project IDs, skipping any that don't resolve to actual projects
                     for (String targetId : sub.getTarget()) {
-                        Project proj = Persistence.projects.getById(targetId);
-                        if (proj == null) continue;
+                        Project project = Persistence.projects.getById(targetId);
+                        if (project == null) continue;
 
                         // Iterate through Project's FeedSources, creating "Feed created" items as needed
-                        for (FeedSource fs : proj.retrieveProjectFeedSources()) {
+                        for (FeedSource fs : project.retrieveProjectFeedSources()) {
                             ZonedDateTime dateCreated = toZonedDateTime(fs.dateCreated);
                             if (dateCreated.isBefore(from) || dateCreated.isAfter(to)) continue;
-                            activityList.add(new FeedSourceCreationActivity(fs, proj));
+                            activityList.add(new FeedSourceCreationActivity(fs, project));
                         }
                     }
                     break;
@@ -406,6 +482,7 @@ public class UserController {
         get(apiPrefix + "secure/user/:id", UserController::getUser, json::write);
         get(apiPrefix + "secure/user/:id/recentactivity", UserController::getRecentActivity, json::write);
         get(apiPrefix + "secure/user", UserController::getAllUsers, json::write);
+        get(apiPrefix + "secure/userinfo", UserController::getUserInfo, json::write);
         get(apiPrefix + "secure/usercount", UserController::getUserCount, json::write);
         post(apiPrefix + "secure/user", UserController::createUser, json::write);
         put(apiPrefix + "secure/user/:id", UserController::updateUser, json::write);

@@ -14,12 +14,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URLEncoder;
 import java.util.Collection;
 import java.util.HashSet;
+
+import static com.conveyal.datatools.common.utils.SparkUtils.haltWithMessage;
+import static org.apache.commons.lang.CharEncoding.UTF_8;
 
 /**
  * This class contains methods for querying Auth0 users using the Auth0 User Management API. Auth0 docs describing the
@@ -31,6 +32,7 @@ public class Auth0Users {
     private static final String clientId = DataManager.getConfigPropertyAsText("AUTH0_CLIENT_ID");
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final Logger LOG = LoggerFactory.getLogger(Auth0Users.class);
+    private static final HttpClient client = HttpClientBuilder.create().build();
 
     /**
      * Constructs a user search query URL.
@@ -43,12 +45,12 @@ public class Auth0Users {
     private static URI getUrl(String searchQuery, int page, int perPage, boolean includeTotals) {
         // always filter users by datatools client_id
         String defaultQuery = "app_metadata.datatools.client_id:" + clientId;
-        URIBuilder builder = new URIBuilder();
-        builder.setScheme("https").setHost(AUTH0_DOMAIN).setPath("/api/v2/users");
-        builder.setParameter("sort", "email:1");
-        builder.setParameter("per_page", Integer.toString(perPage));
-        builder.setParameter("page", Integer.toString(page));
-        builder.setParameter("include_totals", Boolean.toString(includeTotals));
+        URIBuilder builder = new URIBuilder()
+            .setScheme("https").setHost(AUTH0_DOMAIN).setPath("/api/v2/users")
+            .setParameter("sort", "email:1")
+            .setParameter("per_page", Integer.toString(perPage))
+            .setParameter("page", Integer.toString(page))
+            .setParameter("include_totals", Boolean.toString(includeTotals));
         if (searchQuery != null) {
             builder.setParameter("search_engine", "v2");
             builder.setParameter("q", searchQuery + " AND " + defaultQuery);
@@ -62,12 +64,9 @@ public class Auth0Users {
 
         try {
             uri = builder.build();
-
         } catch (URISyntaxException e) {
             e.printStackTrace();
-            return null;
         }
-
         return uri;
     }
 
@@ -76,13 +75,10 @@ public class Auth0Users {
      */
     private static String doRequest(URI uri) {
         LOG.info("Auth0 getUsers URL=" + uri);
-        String charset = "UTF-8";
-
-        HttpClient client = HttpClientBuilder.create().build();
         HttpGet request = new HttpGet(uri);
 
         request.addHeader("Authorization", "Bearer " + AUTH0_API_TOKEN);
-        request.setHeader("Accept-Charset", charset);
+        request.setHeader("Accept-Charset", UTF_8);
         HttpResponse response = null;
 
         try {
@@ -94,7 +90,8 @@ public class Auth0Users {
         String result = null;
 
         try {
-            result = EntityUtils.toString(response.getEntity());
+            if (response != null) result = EntityUtils.toString(response.getEntity());
+            else haltWithMessage(400, "Response is null");
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -143,10 +140,9 @@ public class Auth0Users {
 
         URIBuilder builder = new URIBuilder();
         builder.setScheme("https").setHost(AUTH0_DOMAIN).setPath("/api/v2/users/" + id);
-        URI uri = null;
+        URI uri;
         try {
             uri = builder.build();
-
         } catch (URISyntaxException e) {
             e.printStackTrace();
             return null;

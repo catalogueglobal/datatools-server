@@ -300,6 +300,13 @@
             <artifactId>bugsnag</artifactId>
         </dependency>
 
+        <!-- Auth0 library used for managing management API auth tokens -->
+        <dependency>
+            <groupId>com.auth0</groupId>
+            <artifactId>auth0</artifactId>
+            <version>1.8.0</version>
+        </dependency>
+
     </dependencies>
 
 </project>

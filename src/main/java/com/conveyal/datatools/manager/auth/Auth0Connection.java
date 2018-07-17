@@ -1,27 +1,35 @@
 package com.conveyal.datatools.manager.auth;
 
+import com.auth0.client.mgmt.ManagementAPI;
+import com.auth0.client.mgmt.filter.UserFilter;
+import com.auth0.json.mgmt.users.User;
 import com.conveyal.datatools.common.utils.SparkUtils;
 import com.conveyal.datatools.manager.DataManager;
+import com.conveyal.datatools.manager.controllers.api.UserController;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.persistence.Persistence;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import spark.Request;
 import spark.Response;
 
-import javax.net.ssl.HttpsURLConnection;
 import javax.servlet.http.HttpServletResponse;
-import java.io.BufferedReader;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.URL;
 import java.util.Arrays;
 
 import static com.conveyal.datatools.common.utils.SparkUtils.haltWithMessage;
 import static com.conveyal.datatools.manager.DataManager.getConfigPropertyAsText;
+import static com.conveyal.datatools.manager.controllers.api.UserController.AUTH0_DOMAIN;
+import static com.conveyal.datatools.manager.controllers.api.UserController.getAuthToken;
+import static org.apache.commons.lang.CharEncoding.UTF_8;
 import static spark.Spark.halt;
 
 /**
@@ -33,6 +41,7 @@ public class Auth0Connection {
     private static final Logger LOG = LoggerFactory.getLogger(Auth0Connection.class);
     private static final String BASE_URL = getConfigPropertyAsText("application.public_url");
     private static final int DEFAULT_LINES_TO_PRINT = 10;
+    private static final HttpClient client = HttpClients.createDefault();
 
     /**
      * Check API request for user token and assign as the "user" attribute on the incoming request object for use in
@@ -50,10 +59,30 @@ public class Auth0Connection {
         if(token == null) {
             haltWithMessage(401, "Could not find authorization token");
         }
-        Auth0UserProfile profile;
         try {
-            profile = getUserProfile(token);
+            // Construct HTTP request.
+            HttpPost request = new HttpPost("https://" + AUTH0_DOMAIN + "/userinfo");
+            request.addHeader("Authorization", "Bearer " + token);
+            request.setHeader("Accept-Charset", UTF_8);
+            request.setHeader("Content-Type", "application/json");
+            //Execute and get the response.
+            HttpResponse response = client.execute(request);
+            int statusCode = response.getStatusLine().getStatusCode();
+            HttpEntity entity = response.getEntity();
+            String responseString = EntityUtils.toString(entity);
+            if (statusCode >= 300) {
+                LOG.error("Error response from Auth0: {}", responseString);
+                throw new IllegalStateException("Could not verify user");
+            }
+            // Assign Auth0 user profile (and raw JSON NODE) to Spark request.
+            Auth0UserProfile profile = MAPPER.readValue(responseString, Auth0UserProfile.class);
+            String authToken = getAuthToken();
+            UserController.mgmt = new ManagementAPI(AUTH0_DOMAIN, authToken);
+            JsonNode jsonUser = MAPPER.readTree(responseString);
+            User user = UserController.mgmt.users().get(jsonUser.get("sub").asText(), new UserFilter()).execute();
+            req.attribute("authUser", user);
             req.attribute("user", profile);
+            req.attribute("rawUser", MAPPER.readTree(responseString));
         }
         catch(Exception e) {
             LOG.warn("Could not verify user", e);
@@ -75,51 +104,8 @@ public class Auth0Connection {
         String credentials = parts[1];
 
         if (scheme.equals("Bearer")) token = credentials;
+        if ("null".equals(token)) return null;
         return token;
-    }
-
-    /**
-     * Gets the Auth0 user profile for the provided token.
-     */
-    private static Auth0UserProfile getUserProfile(String token) throws Exception {
-
-        URL url = new URL("https://" + getConfigPropertyAsText("AUTH0_DOMAIN") + "/tokeninfo");
-        HttpsURLConnection con = (HttpsURLConnection) url.openConnection();
-
-        //add request header
-        con.setRequestMethod("POST");
-
-        String urlParameters = "id_token=" + token;
-
-        // Send post request
-        con.setDoOutput(true);
-        DataOutputStream wr = new DataOutputStream(con.getOutputStream());
-        wr.writeBytes(urlParameters);
-        wr.flush();
-        wr.close();
-
-        BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-        String inputLine;
-        StringBuffer response = new StringBuffer();
-
-        while ((inputLine = in.readLine()) != null) {
-            response.append(inputLine);
-        }
-        in.close();
-
-        ObjectMapper m = new ObjectMapper();
-        Auth0UserProfile profile = null;
-        String userString = response.toString();
-        try {
-            profile = m.readValue(userString, Auth0UserProfile.class);
-        }
-        catch(Exception e) {
-            Object json = m.readValue(userString, Object.class);
-            LOG.warn(m.writerWithDefaultPrettyPrinter().writeValueAsString(json));
-            LOG.warn("Could not verify user", e);
-            halt(401, SparkUtils.formatJSON("Could not verify user", 401));
-        }
-        return profile;
     }
 
     /**
@@ -184,12 +170,7 @@ public class Auth0Connection {
         // JSON.
         String bodyString = "";
         try {
-            String contentType;
-            if (logRequest) {
-                contentType = request.contentType();
-            } else {
-                contentType = raw.getHeader("content-type");
-            }
+            String contentType = logRequest ? request.contentType() : raw.getHeader("content-type");
             if ("application/json".equals(contentType)) {
                 bodyString = logRequest ? request.body() : response.body();
                 if (bodyString == null) return;
