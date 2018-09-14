@@ -139,7 +139,7 @@ public class ProcessGtfsSnapshotExport implements Runnable {
                         // add calendar dates
                         if (feedTx.exceptions != null) {
                             for (ScheduleException ex : feedTx.exceptions.values()) {
-                                if (ex.equals(ScheduleException.ExemplarServiceDescriptor.SWAP) && !ex.addedService.contains(cal.id) && !ex.removedService.contains(cal.id))
+                                if (ex.exemplar.equals(ScheduleException.ExemplarServiceDescriptor.SWAP) && !ex.addedService.contains(cal.id) && !ex.removedService.contains(cal.id))
                                     // skip swap exception if cal is not referenced by added or removed service
                                     // this is not technically necessary, but the output is cleaner/more intelligible
                                     continue;
