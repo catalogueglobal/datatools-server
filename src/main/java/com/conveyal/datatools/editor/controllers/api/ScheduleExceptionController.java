@@ -6,6 +6,8 @@ import com.conveyal.datatools.editor.datastore.VersionedDataStore;
 import com.conveyal.datatools.editor.models.transit.ScheduleException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 import com.conveyal.datatools.manager.models.JsonViews;
 import com.conveyal.datatools.manager.utils.json.JsonManager;
@@ -99,10 +101,14 @@ public class ScheduleExceptionController {
             if (tx.exceptions.containsKey(ex.id)) {
                 halt(400);
             }
+            List<LocalDate> allExceptionDates = tx.exceptions.values().stream()
+                    .map(e -> e.dates)
+                    .flatMap(List::stream)
+                    .collect(Collectors.toList());
             if (ex.dates != null) {
                 for (LocalDate date : ex.dates) {
-                    if (tx.scheduleExceptionCountByDate.containsKey(date) && tx.scheduleExceptionCountByDate.get(date) > 0) {
-                        halt(400);
+                    if (allExceptionDates.contains(date)) {
+                        halt(400, "Cannot create multiple schedule exceptions for the same date.");
                     }
                 }
             }

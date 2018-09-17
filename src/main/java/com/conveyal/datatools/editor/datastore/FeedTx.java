@@ -62,9 +62,6 @@ public class FeedTx extends DatabaseTx {
     /** <Stop ID, Pattern ID> </Stop>trip patterns using each stop */
     public NavigableSet<Tuple2<String, String>> tripPatternsByStop;
 
-    /** number of schedule exceptions on each date - this will always be null, 0, or 1, as we prevent save of others */
-    public ConcurrentMap<LocalDate, Long> scheduleExceptionCountByDate;
-
     /** number of trips on each tuple2<patternId, calendar id> */
     public ConcurrentMap<Tuple2<String, String>, Long> tripCountByPatternAndCalendar;
 
@@ -164,31 +161,6 @@ public class FeedTx extends DatabaseTx {
 
         tripCountByPatternAndCalendar = getMap("tripCountByPatternAndCalendar");
         Bind.histogram(trips, tripCountByPatternAndCalendar, (tripId, trip) -> new Tuple2(trip.patternId, trip.calendarId));
-
-        // getting schedule exception map appears to be causing issues for some feeds
-        // The names of the code writers have been changed to protect the innocent.
-        try {
-            scheduleExceptionCountByDate = getMap("scheduleExceptionCountByDate");
-        } catch (RuntimeException e1) {
-            LOG.error("Error getting scheduleExceptionCountByDate map. Getting a new one.");
-            int count = 0;
-            final int NEW_MAP_LIMIT = 100;
-            while (true) {
-                try {
-                    scheduleExceptionCountByDate = getMap("scheduleExceptionCountByDateMapDBIsTheWORST" + count);
-                } catch (RuntimeException e2) {
-                    LOG.error("Error getting {} scheduleExceptionCountByDateMapDBIsTheWORST map. Getting a new one.", count);
-                    count++;
-                    if (count > NEW_MAP_LIMIT) {
-                        LOG.error("Cannot create new map. Reached limit of {}", NEW_MAP_LIMIT);
-                        throw e2;
-                    }
-                    continue;
-                }
-                break;
-            }
-        }
-        BindUtils.multiHistogram(exceptions, scheduleExceptionCountByDate, (id, ex) -> ex.dates.toArray(new LocalDate[ex.dates.size()]));
 
         tripCountByCalendar = getMap("tripCountByCalendar");
         BindUtils.multiHistogram(trips, tripCountByCalendar, (key, trip) -> {
@@ -432,7 +404,6 @@ public class FeedTx extends DatabaseTx {
 
             // copy histograms
             pump(newDb, "tripCountByCalendar", (BTreeMap) feedTx.tripCountByCalendar);
-            pump(newDb, "scheduleExceptionCountByDate", (BTreeMap) feedTx.scheduleExceptionCountByDate);
             pump(newDb, "tripCountByPatternAndCalendar", (BTreeMap) feedTx.tripCountByPatternAndCalendar);
 
         }
