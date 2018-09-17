@@ -139,10 +139,7 @@ public class ProjectController {
     private static Project deleteProject(Request req, Response res) {
         // Fetch project first to check permissions, and so we can return the deleted project after deletion.
         Project project = requestProjectById(req, "manage");
-        boolean successfullyDeleted = project.delete();
-        if (!successfullyDeleted) {
-            haltWithMessage(400, "Did not delete project.");
-        }
+        project.delete();
         return project;
     }
 

@@ -2,6 +2,7 @@ package com.conveyal.datatools.manager.models;
 
 import com.conveyal.datatools.manager.persistence.Persistence;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.mongodb.client.ClientSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,9 +87,8 @@ public class Project extends Model {
      * Get all the deployments for this project.
      */
     public Collection<Deployment> retrieveDeployments() {
-        List<Deployment> deployments = Persistence.deployments
+        return Persistence.deployments
                 .getFiltered(eq("projectId", this.id));
-        return deployments;
     }
 
     // TODO: Does this need to be returned with JSON API response
@@ -100,16 +100,13 @@ public class Project extends Model {
         }
     }
 
-    public boolean delete() {
+    public void delete() {
         // FIXME: Handle this in a Mongo transaction. See https://docs.mongodb.com/master/core/transactions/#transactions-and-mongodb-drivers
-//        ClientSession clientSession = Persistence.startSession();
-//        clientSession.startTransaction();
-
         // Delete each feed source in the project (which in turn deletes each feed version).
         retrieveProjectFeedSources().forEach(FeedSource::delete);
         // Delete each deployment in the project.
         retrieveDeployments().forEach(Deployment::delete);
         // Finally, delete the project.
-        return Persistence.projects.removeById(this.id);
+        Persistence.projects.removeById(this.id);
     }
 }
