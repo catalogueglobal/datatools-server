@@ -1,11 +1,11 @@
 package com.conveyal.datatools.manager.extensions;
 
 import com.conveyal.datatools.manager.DataManager;
-import com.conveyal.datatools.manager.extensions.mtc.RtdCarrier;
 import com.conveyal.datatools.manager.models.ExternalFeedSourceProperty;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.Project;
+import com.conveyal.datatools.manager.persistence.Persistence;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.client.utils.URIBuilder;
 import org.slf4j.Logger;
@@ -22,6 +22,8 @@ import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.Map;
+
+import static com.conveyal.datatools.manager.models.ExternalFeedSourceProperty.constructId;
 
 /**
  * This interface allows for the creation of and interaction with external feed resources
@@ -85,20 +87,7 @@ public interface ExternalFeedResource {
 //    }
 
     default void feedSourceCreated(FeedSource source, String authHeader) {
-        LOG.info("Processing new FeedSource " + source.name + " for {}", getResourceType());
-
-        RtdCarrier carrier = new RtdCarrier();
-        carrier.AgencyName = source.name;
-
-        try {
-            for (Field carrierField : carrier.getClass().getDeclaredFields()) {
-                String fieldName = carrierField.getName();
-                String fieldValue = carrierField.get(carrier) != null ? carrierField.get(carrier).toString() : null;
-                ExternalFeedSourceProperty.updateOrCreate(source, getResourceType(), fieldName, fieldValue);
-            }
-        } catch (Exception e) {
-            LOG.error("Error creating external properties for new FeedSource");
-        }
+        LOG.info("Processing new FeedSource {} for {}", source.name, getResourceType());
     }
 
     void propertyUpdated(ExternalFeedSourceProperty property, String previousValue, String authHeader);
@@ -121,10 +110,10 @@ public interface ExternalFeedResource {
      */
     default FeedSource checkForExistingFeed(Project project, ExternalFeed externalFeed) {
         // check if a feed already exists with this id
-        for (FeedSource existingSource : project.getProjectFeedSources()) {
-            ExternalFeedSourceProperty idValue =
-                    ExternalFeedSourceProperty.find(existingSource, this.getResourceType(), externalFeed.getIdKey());
-            if (idValue != null && idValue.value != null && idValue.value.equals(externalFeed.getId())) {
+        for (FeedSource existingSource : project.retrieveProjectFeedSources()) {
+            String id = constructId(existingSource, this.getResourceType(), externalFeed.getIdKey());
+            ExternalFeedSourceProperty prop = Persistence.externalFeedSourceProperties.getById(id);
+            if (prop != null && prop.value != null && prop.value.equals(externalFeed.getId())) {
                 return existingSource;
             }
         }
@@ -186,13 +175,14 @@ public interface ExternalFeedResource {
      * @param externalFeed
      */
     default void importFeed(Project project, ExternalFeed externalFeed) {
-
+        boolean feedSourceExistsAlready = false;
         // check for existing feed in project (see if unique ID already exists)
         FeedSource source = checkForExistingFeed(project, externalFeed);
 
         String feedName = externalFeed.getName();
 
         if (source == null) {
+            feedSourceExistsAlready = true;
             source = new FeedSource(feedName);
             LOG.info("Creating new feed source: {}", source.name);
         } else {
@@ -210,10 +200,13 @@ public interface ExternalFeedResource {
             }
         }
 
-        // save feed source settings
-        source.setName(feedName);
-        source.setProject(project);
-        source.save();
+        if (feedSourceExistsAlready) {
+            // Update fields using replace
+            Persistence.feedSources.replace(source.id, source);
+        } else {
+            // Create new feed source
+            Persistence.feedSources.create(source);
+        }
 
         // create / update the properties using reflection
         for(Field externalField : externalFeed.getClass().getDeclaredFields()) {
@@ -226,8 +219,13 @@ public interface ExternalFeedResource {
             } catch (IllegalAccessException e) {
                 e.printStackTrace();
             }
-
-            ExternalFeedSourceProperty.updateOrCreate(source, this.getResourceType(), fieldName, fieldValue);
+            ExternalFeedSourceProperty prop = new ExternalFeedSourceProperty(source, getResourceType(), fieldName, fieldValue);
+            // Update or create property.
+            if (Persistence.externalFeedSourceProperties.getById(prop.id) == null) {
+                Persistence.externalFeedSourceProperties.create(prop);
+            } else {
+                Persistence.externalFeedSourceProperties.updateField(prop.id, fieldName, fieldValue);
+            }
         }
     }
 }

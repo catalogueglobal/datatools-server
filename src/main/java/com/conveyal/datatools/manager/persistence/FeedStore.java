@@ -1,32 +1,37 @@
 package com.conveyal.datatools.manager.persistence;
 
-import java.io.*;
-import java.util.ArrayList;
-import java.util.List;
-
 import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.SdkClientException;
 import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.*;
+import com.amazonaws.services.s3.model.CopyObjectRequest;
+import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.transfer.TransferManager;
 import com.amazonaws.services.s3.transfer.TransferManagerBuilder;
 import com.amazonaws.services.s3.transfer.Upload;
 import com.conveyal.datatools.manager.DataManager;
-import com.conveyal.datatools.manager.controllers.api.GtfsApiController;
 import com.conveyal.datatools.manager.models.FeedSource;
 import gnu.trove.list.TLongList;
 import gnu.trove.list.array.TLongArrayList;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
-
-import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
-import com.amazonaws.auth.profile.ProfileCredentialsProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+import static com.conveyal.datatools.manager.DataManager.hasConfigProperty;
 
 /**
  * Store a feed on the file system or s3
@@ -45,6 +50,7 @@ public class FeedStore {
 
     public static final String s3Prefix = "gtfs/";
 
+    // FIXME: this should not be static most likely
     public static AmazonS3 s3Client;
     /** An AWS credentials file to use when uploading to S3 */
     private static final String S3_CREDENTIALS_FILENAME = DataManager.getConfigPropertyAsText("application.data.s3_credentials_file");
@@ -68,7 +74,7 @@ public class FeedStore {
 
     static {
         // s3 storage
-        if (DataManager.useS3 || GtfsApiController.extensionType.equals("mtc")){
+        if (DataManager.useS3 || hasConfigProperty("modules.gtfsapi.use_extension")){
             s3Bucket = DataManager.getConfigPropertyAsText("application.data.gtfs_s3_bucket");
             AmazonS3ClientBuilder builder = AmazonS3ClientBuilder.standard()
                     .withCredentials(getAWSCreds());
@@ -83,8 +89,12 @@ public class FeedStore {
             }
             try {
                 s3Client = builder.build();
-            } catch (SdkClientException e) {
+            } catch (Exception e) {
                 LOG.error("S3 client not initialized correctly.  Must provide config property application.data.s3_region or specify region in ~/.aws/config", e);
+            }
+            // TODO: check for this??
+            if (s3Client == null || s3Bucket == null) {
+                throw new IllegalArgumentException("Fatal error initializing s3Bucket or s3Client");
             }
         }
     }
@@ -92,6 +102,7 @@ public class FeedStore {
     private static File getPath (String pathString) {
         File path = new File(pathString);
         if (!path.exists() || !path.isDirectory()) {
+            LOG.error("Directory does not exist {}", pathString);
             throw new IllegalArgumentException("Not a directory or not found: " + pathString);
         }
         return path;
@@ -156,7 +167,7 @@ public class FeedStore {
         }
     }
 
-    private String getS3Key (String id) {
+    private static String getS3Key (String id) {
         return s3Prefix + id;
     }
 
@@ -166,8 +177,11 @@ public class FeedStore {
     public File getFeed (String id) {
         // local storage
         File feed = new File(path, id);
-        // don't let folks get feeds outside of the directory
-        if (feed.getParentFile().equals(path) && feed.exists()) return feed;
+        // Whether storing locally or on s3, return local version if it exists.
+        // Also, don't let folks retrieveById feeds outside of the directory
+        if (feed.getParentFile().equals(path) && feed.exists()) {
+            return feed;
+        }
 
         // s3 storage
         if (DataManager.useS3) {
@@ -178,6 +192,7 @@ public class FeedStore {
                         new GetObjectRequest(s3Bucket, key));
                 InputStream objectData = object.getObjectContent();
 
+                // FIXME: Figure out how to manage temp files created here. Currently, deleteOnExit is called in createTempFile
                 return createTempFile(id, objectData);
             } catch (AmazonServiceException ase) {
                 LOG.error("Error downloading s3://{}/{}", s3Bucket, key);
@@ -205,9 +220,9 @@ public class FeedStore {
         } catch (IOException e) {
             e.printStackTrace();
         }
-        if (feedSource != null) {
+        if (feedSource != null && !DataManager.useS3) {
+            // Store latest as feed-source-id.zip if feedSource provided and if not using s3
             try {
-                // store latest as feed-source-id.zip if feedSource provided
                 copyVersionToLatest(feed, feedSource);
             } catch (Exception e) {
                 e.printStackTrace();
@@ -228,25 +243,20 @@ public class FeedStore {
     }
 
     private File writeFileUsingInputStream(String filename, InputStream inputStream) throws IOException {
-        OutputStream output = null;
         File out = new File(path, filename);
-        try {
-            LOG.info("Writing file to {}/{}", path, filename);
-            output = new FileOutputStream(out);
+        LOG.info("Writing file to {}/{}", path, filename);
+        try (OutputStream output = new FileOutputStream(out)) {
             byte[] buf = new byte[1024];
             int bytesRead;
             while ((bytesRead = inputStream.read(buf)) > 0) {
                 output.write(buf, 0, bytesRead);
             }
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
         } catch (IOException e) {
             e.printStackTrace();
         } finally {
             inputStream.close();
-            output.close();
-            return out;
         }
+        return out;
     }
 
     private File createTempFile (String name, InputStream in) throws IOException {
@@ -260,19 +270,15 @@ public class FeedStore {
         return tempFile;
     }
 
-    private File uploadToS3 (InputStream inputStream, String id, FeedSource feedSource) {
+    public boolean uploadToS3 (File gtfsFile, String s3FileName, FeedSource feedSource) {
         if (s3Bucket != null) {
             try {
-                // Use tempfile
-                LOG.info("Creating temp file for {}", id);
-                File tempFile = createTempFile(id, inputStream);
-
-                LOG.info("Uploading feed {} to S3 from tempfile", id);
+                LOG.info("Uploading feed {} to S3 from {}", s3FileName, gtfsFile.getAbsolutePath());
                 TransferManager tm = TransferManagerBuilder.standard().withS3Client(s3Client).build();
-                PutObjectRequest request = new PutObjectRequest(s3Bucket, getS3Key(id), tempFile);
+                PutObjectRequest request = new PutObjectRequest(s3Bucket, getS3Key(s3FileName), gtfsFile);
                 // Subscribe to the event and provide event handler.
                 TLongList transferredBytes = new TLongArrayList();
-                long totalBytes = tempFile.length();
+                long totalBytes = gtfsFile.length();
                 LOG.info("Total kilobytes: {}", totalBytes / 1000);
                 request.setGeneralProgressListener(progressEvent -> {
                     if (transferredBytes.size() == 75) {
@@ -291,11 +297,9 @@ public class FeedStore {
                 try {
                     // You can block and wait for the upload to finish
                     upload.waitForCompletion();
-                } catch (AmazonClientException amazonClientException) {
-                    System.out.println("Unable to upload file, upload aborted.");
-                    amazonClientException.printStackTrace();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+                } catch (AmazonClientException | InterruptedException e) {
+                    LOG.error("Unable to upload file, upload aborted.", e);
+                    return false;
                 }
 
                 // Shutdown the Transfer Manager, but don't shut down the underlying S3 client.
@@ -309,18 +313,15 @@ public class FeedStore {
                     // copy to [feedSourceId].zip
                     String copyKey = s3Prefix + feedSource.id + ".zip";
                     CopyObjectRequest copyObjRequest = new CopyObjectRequest(
-                            s3Bucket, getS3Key(id), s3Bucket, copyKey);
+                            s3Bucket, getS3Key(s3FileName), s3Bucket, copyKey);
                     s3Client.copyObject(copyObjRequest);
                 }
-                return tempFile;
-            } catch (AmazonServiceException ase) {
-                LOG.error("Error uploading feed to S3");
-                ase.printStackTrace();
-                return null;
-            } catch (IOException e) {
-                e.printStackTrace();
+                return true;
+            } catch (AmazonServiceException e) {
+                LOG.error("Error uploading feed to S3", e);
+                return false;
             }
         }
-        return null;
+        return false;
     }
 }

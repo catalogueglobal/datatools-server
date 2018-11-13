@@ -1,68 +1,33 @@
 package com.conveyal.datatools.manager.extensions.mtc;
 
 import com.conveyal.datatools.manager.extensions.ExternalFeed;
-import com.conveyal.datatools.manager.models.FeedSource;
-import com.fasterxml.jackson.annotation.JsonProperty;
+
+import static com.conveyal.datatools.manager.extensions.mtc.MtcFeedResource.AGENCY_ID;
 
 /**
  * Created by demory on 3/30/16.
  */
 
 public class RtdCarrier implements ExternalFeed {
-
-    @JsonProperty
     public String AgencyId;
-
-    @JsonProperty
     public String AgencyName;
-
-    @JsonProperty
     public String AgencyPhone;
-
-    @JsonProperty
     public String RttAgencyName;
-
-    @JsonProperty
     public String RttEnabled;
-
-    @JsonProperty
     public String AgencyShortName;
-
-    @JsonProperty
     public String AgencyPublicId;
-
-    @JsonProperty
     public String AddressLat;
-
-    @JsonProperty
     public String AddressLon;
-
-    @JsonProperty
     public String DefaultRouteType;
-
-    @JsonProperty
     public String CarrierStatus;
-
-    @JsonProperty
     public String AgencyAddress;
-
-    @JsonProperty
     public String AgencyEmail;
-
-    @JsonProperty
     public String AgencyUrl;
-
-    @JsonProperty
     public String AgencyFareUrl;
-
-    @JsonProperty
     public String EditedBy;
-
-    @JsonProperty
     public String EditedDate;
 
-    public RtdCarrier() {
-    }
+    public RtdCarrier() { }
 
     @Override
     public String getId() {
@@ -71,7 +36,7 @@ public class RtdCarrier implements ExternalFeed {
 
     @Override
     public String getIdKey() {
-        return "AgencyId";
+        return AGENCY_ID;
     }
 
     @Override

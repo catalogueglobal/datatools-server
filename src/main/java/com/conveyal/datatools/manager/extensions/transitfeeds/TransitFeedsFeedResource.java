@@ -6,6 +6,7 @@ import com.conveyal.datatools.manager.models.ExternalFeedSourceProperty;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.Project;
+import com.conveyal.datatools.manager.persistence.Persistence;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.io.IOException;
@@ -13,6 +14,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static spark.Spark.halt;
+
+import static com.conveyal.datatools.manager.models.ExternalFeedSourceProperty.constructId;
 
 /**
  * Created by demory on 3/31/16.
@@ -79,10 +82,10 @@ public class TransitFeedsFeedResource implements ExternalFeedResource {
      */
     private TransitFeedsFeed constructTransitFeed(Project project, JsonNode json) {
         // test that feed falls in bounding box (if box exists)
-        if (project.north != null) {
-            Double lat = json.get("l").get("lat").asDouble();
-            Double lng = json.get("l").get("lng").asDouble();
-            if (lat < project.south || lat > project.north || lng < project.west || lng > project.east) {
+        if (project.bounds != null) {
+            double lat = json.get("l").get("lat").asDouble();
+            double lng = json.get("l").get("lng").asDouble();
+            if (lat < project.bounds.south || lat > project.bounds.north || lng < project.bounds.west || lng > project.bounds.east) {
                 return null;
             }
         }

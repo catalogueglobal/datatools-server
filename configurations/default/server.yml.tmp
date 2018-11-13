@@ -4,22 +4,16 @@ application:
   notifications_enabled: false
   port: 4000
   data:
-    mapdb: /tmp
     gtfs: /tmp
-    editor_mapdb: /tmp
-    regions: /tmp
     use_s3_storage: false
     s3_region: us-east-1
-    aws_role: arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/${AWS_ROLE_NAME}
     gtfs_s3_bucket: bucket-name
 modules:
   enterprise:
     enabled: false
   editor:
-    enabled: true
+    enabled: false
   user_admin:
-    enabled: true
-  validator:
     enabled: true
   gtfsapi:
     enabled: true

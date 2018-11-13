@@ -40,8 +40,8 @@ public class TransitLandFeedResource implements ExternalFeedResource {
             params.put("total", "true");
             params.put("per_page", String.valueOf(perPage));
             params.put("offset", String.valueOf(offset));
-            if (project.north != null && project.south != null && project.east != null && project.west != null)
-                params.put("bbox", project.west + "," + + project.south + "," + project.east + "," + project.north);
+            if (project.bounds != null)
+                params.put("bbox", project.bounds.west + "," + + project.bounds.south + "," + project.bounds.east + "," + project.bounds.north);
 
             try {
                 String json = getFeedsJson(getUrl(params), null);

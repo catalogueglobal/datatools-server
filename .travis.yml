@@ -3,9 +3,11 @@ jdk:
 - oraclejdk8
 install: true
 sudo: false
+# Install mongoDB to perform persistence tests
+services: mongodb
 cache:
   directories:
-  - "$HOME/.m2/repository"
+  - "$HOME/.m2"
 before_install:
 #- sed -i.bak -e 's|https://nexus.codehaus.org/snapshots/|https://oss.sonatype.org/content/repositories/codehaus-snapshots/|g' ~/.m2/settings.xml
 # set region in AWS config for S3 setup
@@ -14,6 +16,9 @@ before_install:
 script:
 # package jar
 - mvn package
+after_success:
+# Upload coverage reports to codecov.io
+- bash <(curl -s https://codecov.io/bash)
 # notify slack channel of build status
 notifications:
   slack: conveyal:WQxmWiu8PdmujwLw4ziW72Gc
