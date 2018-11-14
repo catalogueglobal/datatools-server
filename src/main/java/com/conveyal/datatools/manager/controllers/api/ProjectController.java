@@ -5,6 +5,7 @@ import com.conveyal.datatools.manager.auth.Auth0UserProfile;
 import com.conveyal.datatools.manager.jobs.FetchProjectFeedsJob;
 import com.conveyal.datatools.manager.jobs.MakePublicJob;
 import com.conveyal.datatools.manager.jobs.MergeProjectFeedsJob;
+import com.conveyal.datatools.manager.jobs.SyncProjectFeedsJob;
 import com.conveyal.datatools.manager.models.FeedDownloadToken;
 import com.conveyal.datatools.manager.models.FeedVersion;
 import com.conveyal.datatools.manager.models.JsonViews;
@@ -293,24 +294,27 @@ public class ProjectController {
      * index of GTFS data. This action is triggered manually by a UI button and for now never happens automatically.
      * An ExternalFeedResource of the specified type must be present in DataManager.feedResources
      */
-    private static Project thirdPartySync(Request req, Response res) {
+    private static String thirdPartySync(Request req, Response res) {
         Auth0UserProfile userProfile = req.attribute("user");
         String id = req.params("id");
-        Project proj = Persistence.projects.getById(id);
+        Project project = Persistence.projects.getById(id);
 
         String syncType = req.params("type");
 
-        if (!userProfile.canAdministerProject(proj.id, proj.organizationId)) {
+        if (!userProfile.canAdministerProject(project.id, project.organizationId)) {
             haltWithMessage(req, 403, "Third-party sync not permitted for user.");
         }
 
-        LOG.info("syncing with third party " + syncType);
-        if(DataManager.feedResources.containsKey(syncType)) {
-            DataManager.feedResources.get(syncType).importFeedsForProject(proj, req.headers("Authorization"));
-            return proj;
+        if (DataManager.feedResources.containsKey(syncType)) {
+            LOG.info("syncing with third party " + syncType);
+            SyncProjectFeedsJob syncProjectFeedsJob = new SyncProjectFeedsJob(userProfile.getUser_id(), project, syncType, req.headers("Authorization"));
+            DataManager.lightExecutor.execute(syncProjectFeedsJob);
+            return formatJobMessage(syncProjectFeedsJob.jobId, String.format("Beginning sync with %s", syncType));
+        } else {
+            LOG.warn("Sync type {} not supported", syncType);
+            haltWithMessage(req, 404, syncType + " sync type not enabled for application.");
+            return null;
         }
-        haltWithMessage(req, 404, syncType + " sync type not enabled for application.");
-        return null;
     }
 
     /**

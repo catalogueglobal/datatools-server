@@ -6,7 +6,6 @@ import com.conveyal.datatools.manager.extensions.ExternalFeedResource;
 import com.conveyal.datatools.manager.models.ExternalFeedSourceProperty;
 import com.conveyal.datatools.manager.models.FeedSource;
 import com.conveyal.datatools.manager.models.FeedVersion;
-import com.conveyal.datatools.manager.models.Project;
 import com.conveyal.datatools.manager.persistence.FeedStore;
 import com.conveyal.datatools.manager.persistence.Persistence;
 
@@ -15,8 +14,6 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import static com.conveyal.datatools.manager.models.ExternalFeedSourceProperty.constructId;
@@ -24,6 +21,7 @@ import static com.mongodb.client.model.Filters.and;
 import static com.mongodb.client.model.Filters.eq;
 
 /**
+ * A resource for importing and syncing feeds and their properties from the MTC RTD catalog.
  * Created by demory on 3/30/16.
  */
 public class MtcFeedResource implements ExternalFeedResource {
@@ -43,26 +41,12 @@ public class MtcFeedResource implements ExternalFeedResource {
 
     @Override
     public String getBaseUrl() {
-        return rtdApi + "/Carrier";
+        return String.join("/", rtdApi, "Carrier");
     }
 
     @Override
-    public void importFeedsForProject(Project project, String authHeader) {
-        LOG.info("Syncing with RTD");
-        try {
-            String json = getFeedsJson(getUrl(), authHeader);
-            if (json == null) {
-                LOG.warn("No JSON response found");
-                return;
-            }
-            RtdCarrier[] results = mapper.readValue(json, RtdCarrier[].class);
-            for (RtdCarrier car : results) {
-                importFeed(project, car);
-            }
-        } catch(IOException e) {
-            LOG.error("Could not read feeds from MTC RTD API");
-            e.printStackTrace();
-        }
+    public RtdCarrier[] mapJsonToExternalFeed(String json) throws IOException {
+        return mapper.readValue(json, RtdCarrier[].class);
     }
 
     /**
@@ -84,13 +68,13 @@ public class MtcFeedResource implements ExternalFeedResource {
         // Sync w/ RTD
         FeedSource source = Persistence.feedSources.getById(property.feedSourceId);
         // Get all props for feed source and resource type combination
-        Map<String, String> props = new HashMap<>();
-        Persistence.externalFeedSourceProperties
+        Map<String, String> props = ExternalFeedSourceProperty.propertiesToMap(
+            Persistence.externalFeedSourceProperties
                 .getFiltered(and(
                     eq("feedSourceId", source.id),
                     eq("resourceType", getResourceType())
                 ))
-                .forEach(p -> props.put(p.name, p.value));
+        );
         // Construct carrier from props map
         RtdCarrier carrier = mapper.convertValue(props, RtdCarrier.class);
 
@@ -104,12 +88,9 @@ public class MtcFeedResource implements ExternalFeedResource {
      * When a new feed version for a feed source with an MTC reference is PUBLISHED (not necessarily just created)
      * this function should be called. Here we simply push the GTFS zipfile to the shared MTC S3 bucket for
      * processing/ingestion by the RTD (regional transit database).
-     * @param feedVersion
-     * @param authHeader
      */
     @Override
     public void feedVersionCreated(FeedVersion feedVersion, String authHeader) {
-
         if(s3Bucket == null) {
             LOG.error("Cannot push {} to S3 bucket. No bucket name specified.", feedVersion.id);
             return;
@@ -118,17 +99,13 @@ public class MtcFeedResource implements ExternalFeedResource {
         ExternalFeedSourceProperty agencyIdProp = Persistence.externalFeedSourceProperties.getById(
                 constructId(feedVersion.parentFeedSource(), this.getResourceType(), AGENCY_ID)
         );
-
         if(agencyIdProp == null || agencyIdProp.value.equals("null")) {
             LOG.error("Could not read {} for FeedSource {}", AGENCY_ID, feedVersion.feedSourceId);
             return;
         }
-
         String keyName = String.format("%s%s.zip", s3Prefix, agencyIdProp.value);
         LOG.info("Pushing to MTC S3 Bucket: " + keyName);
-
         File file = feedVersion.retrieveGtfsFile();
-
         // upload GTFS to s3 bucket
         FeedStore.s3Client.putObject(new PutObjectRequest(s3Bucket, keyName, file));
     }
@@ -138,11 +115,10 @@ public class MtcFeedResource implements ExternalFeedResource {
      * the createNew boolean.
      */
     private void writeCarrierToRtd(RtdCarrier carrier, boolean createNew, String authHeader) {
-
         try {
             String carrierJson = mapper.writeValueAsString(carrier);
 
-            URL rtdUrl = new URL(rtdApi + "/Carrier/" + (createNew ? "" : carrier.AgencyId));
+            URL rtdUrl = new URL(String.join("/", getBaseUrl(), (createNew ? "" : carrier.AgencyId)));
             LOG.info("Writing to RTD URL: {}", rtdUrl);
             HttpURLConnection connection = (HttpURLConnection) rtdUrl.openConnection();
 

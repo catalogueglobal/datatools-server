@@ -49,4 +49,9 @@ public class Bounds implements Serializable {
     public String toVexString () {
         return String.format("%.6f,%.6f,%.6f,%.6f", south, west, north, east);
     }
+
+    public boolean containsCoordinate (double lat, double lng) {
+        // If lat and lng fall entirely outside of the box, the bounds does not contain the coordinate.
+        return !(lat < south || lat > north || lng < west || lng > east);
+    }
 }

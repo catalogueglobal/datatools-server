@@ -34,12 +34,12 @@ public class FetchSingleFeedJob extends MonitorableJob {
      */
     @JsonProperty
     public String getFeedVersionId () {
-        return result.id;
+        return result != null ? result.id : null;
     }
 
     @JsonProperty
     public String getFeedSourceId () {
-        return result.parentFeedSource().id;
+        return feedSource.id;
     }
 
     @Override

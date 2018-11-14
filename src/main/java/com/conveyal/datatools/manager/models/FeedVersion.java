@@ -59,7 +59,7 @@ public class FeedVersion extends Model implements Serializable {
         this.feedSourceId = source.id;
         this.name = formattedTimestamp() + " Version";
         this.id = generateFeedVersionId(source);
-        int count = source.feedVersionCount();
+        int count = source.retrieveFeedVersions().size();
         this.version = count + 1;
     }
 
@@ -223,17 +223,20 @@ public class FeedVersion extends Model implements Serializable {
         } catch (Exception e) {
             String errorString = String.format("Error loading GTFS feed for version: %s", this.id);
             LOG.warn(errorString, e);
-            status.update(true, errorString, 0);
+            status.fail(errorString, e);
             // FIXME: Delete local copy of feed version after failed load?
             return;
         }
 
         // FIXME: is this the right approach?
         // if load was unsuccessful, update status and return
-        if(this.feedLoadResult == null) {
-            String errorString = String.format("Could not load GTFS for FeedVersion %s", id);
+        if (feedLoadResult == null || feedLoadResult.fatalException != null) {
+            String errorString = String.format("Could not load GTFS for FeedVersion %s.", id);
+            if (feedLoadResult != null && feedLoadResult.fatalException != null) {
+                errorString += String.format(" %s", feedLoadResult.fatalException);
+            }
             LOG.error(errorString);
-            status.update(true, errorString, 0);
+            status.fail(errorString);
             // FIXME: Delete local copy of feed version after failed load?
             return;
         }

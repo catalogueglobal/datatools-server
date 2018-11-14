@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import static com.conveyal.datatools.manager.utils.StringUtils.getCleanName;
+import static com.mongodb.client.model.Filters.and;
 import static com.mongodb.client.model.Filters.eq;
 
 /**
@@ -355,21 +356,20 @@ public class FeedSource extends Model implements Cloneable {
 //        return false;
 //    }
 
+    /** List of properties associated with this feed source from external resource/API. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonView(JsonViews.UserInterface.class)
     @JsonProperty("externalProperties")
     public Map<String, Map<String, String>> externalProperties() {
-
         Map<String, Map<String, String>> resourceTable = new HashMap<>();
-
+        // For each available resource type, place feed source's properties into their respective tables.
         for(String resourceType : DataManager.feedResources.keySet()) {
-            Map<String, String> propTable = new HashMap<>();
-
-            // FIXME: use mongo filters instead
-            Persistence.externalFeedSourceProperties.getAll().stream()
-                    .filter(prop -> prop.feedSourceId.equals(this.id))
-                    .forEach(prop -> propTable.put(prop.name, prop.value));
-
+            Map<String, String> propTable = ExternalFeedSourceProperty.propertiesToMap(
+                Persistence.externalFeedSourceProperties
+                    .getFiltered(and(
+                        eq("feedSourceId", this.id),
+                        eq("resourceType", resourceType)
+                    )));
             resourceTable.put(resourceType, propTable);
         }
         return resourceTable;
@@ -400,12 +400,6 @@ public class FeedSource extends Model implements Cloneable {
     @JsonIgnore
     public Collection<Deployment> retrieveDeployments () {
         return Persistence.deployments.getFiltered(eq(Snapshot.FEED_SOURCE_REF, this.id));
-    }
-
-//    @JsonView(JsonViews.UserInterface.class)
-//    @JsonProperty("feedVersionCount")
-    public int feedVersionCount() {
-        return retrieveFeedVersions().size();
     }
 
     @JsonView(JsonViews.UserInterface.class)

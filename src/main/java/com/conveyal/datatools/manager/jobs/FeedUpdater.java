@@ -56,10 +56,6 @@ public class FeedUpdater {
     /**
      * Create a {@link FeedUpdater} to poll the provided S3 bucket/prefix at the specified interval (in seconds) for
      * updated files. The updater's task is run using the {@link DataManager#scheduler}.
-     * @param updateFrequencySeconds
-     * @param s3Bucket
-     * @param s3Prefix
-     * @return
      */
     public static FeedUpdater schedule(int updateFrequencySeconds, String s3Bucket, String s3Prefix) {
         return new FeedUpdater(updateFrequencySeconds, s3Bucket, s3Prefix);
@@ -83,7 +79,9 @@ public class FeedUpdater {
     /**
      * Check for any updated feeds that have been published to the S3 bucket. This tracks eTagForFeed (AWS file hash) of s3
      * objects in order to keep data-tools application in sync with external processes (for example, MTC RTD).
-     * @return          map of feedIDs to eTag values
+     *
+     * TODO: Currently this is only applicable for the MTC extension. If needed elsewhere it should be generalized.
+     * @return  map of feedIDs to eTag values
      */
     private Map<String, String> checkForUpdatedFeeds() {
         if (eTagForFeed == null) {
@@ -116,11 +114,14 @@ public class FeedUpdater {
                     ByteStreams.copy(in, out);
                     String md5 = HashUtils.hashFile(file);
                     FeedSource feedSource = null;
-                    List<ExternalFeedSourceProperty> properties = Persistence.externalFeedSourceProperties.getFiltered(and(eq("value", feedId), eq("name", AGENCY_ID)));
+                    // Look for a feed source that has an external property that matches the zip file prefix (AgencyId=$FeedId)
+                    List<ExternalFeedSourceProperty> properties = Persistence.externalFeedSourceProperties.getFiltered(
+                        and(
+                            eq("value", feedId),
+                            eq("name", AGENCY_ID)
+                        ));
                     if (properties.size() > 1) {
-                        StringBuilder b = new StringBuilder();
-                        properties.forEach(b::append);
-                        LOG.warn("Found multiple feed sources for feedId {}: {}",
+                        LOG.warn("Found multiple feed sources for feedId {}. Defaulting to first one found. {}",
                                 feedId,
                                 properties.stream().map(p -> p.feedSourceId).collect(Collectors.joining(",")));
                     }
@@ -131,6 +132,7 @@ public class FeedUpdater {
                         feedSource = Persistence.feedSources.getById(prop.feedSourceId);
                     }
                     if (feedSource == null) {
+                        // We cannot update the feed source's published version ID if no matching feed source was found.
                         LOG.error("No feed source found for feed ID {}", feedId);
                         continue;
                     }
@@ -144,6 +146,8 @@ public class FeedUpdater {
                             foundMatchingVersion = true;
                             LOG.info("Found local version that matches latest file on S3  (SQL namespace={})", feedVersion.namespace);
                             if (!feedVersion.namespace.equals(feedSource.publishedVersionId)) {
+                                // Update the published version ID if it is out of sync with the feed version matching
+                                // the file found on S3.
                                 LOG.info("Updating published version for feed {} to latest s3 published feed.", feedId);
                                 Persistence.feedSources.updateField(feedSource.id, "publishedVersionId", feedVersion.namespace);
                                 Persistence.feedVersions.updateField(feedVersion.id, "processing", false);
